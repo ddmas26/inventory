@@ -2,9 +2,12 @@ package main
 
 import (
 	"log"
+	"net/http"
+	"os"
 
 	"github.com/ddmas26/inventory/internal/config"
 	"github.com/ddmas26/inventory/internal/database"
+	"github.com/ddmas26/inventory/internal/handler"
 )
 
 func main() {
@@ -22,50 +25,45 @@ func main() {
 		log.Fatalf("Migration failed: %v", err)
 	}
 
-	// Initialize repository
+	// Initialize repository and handler
 	repo := database.NewRepository(db)
+	h := handler.NewHandler(repo)
 
-	// --- Demo: create a product ---
-	product := &database.Product{
-		Name:        "Laptop",
-		Description: "High-performance laptop",
-		Price:       1299.99,
-	}
-	if err := repo.CreateProduct(product); err != nil {
-		log.Printf("Create product (may already exist): %v", err)
-	}
-	log.Printf("Created product: %s (%s)\n", product.Name, product.ID)
+	// Set up routes
+	mux := http.NewServeMux()
 
-	// --- Demo: create an inventory location ---
-	inventory := &database.Inventory{
-		Name:      "Main Warehouse",
-		Address:   "123 Storage Blvd",
-		Latitude:  "40.7128",
-		Longitude: "-74.0060",
-	}
-	if err := repo.CreateInventory(inventory); err != nil {
-		log.Printf("Create inventory (may already exist): %v", err)
-	}
-	log.Printf("Created inventory: %s (%s)\n", inventory.Name, inventory.ID)
+	// ── Products ──────────────────────────────────────────────
+	mux.HandleFunc("POST /api/products", h.CreateProduct)
+	mux.HandleFunc("GET /api/products", h.ListProducts)
+	mux.HandleFunc("GET /api/products/{id}", h.GetProduct)
+	mux.HandleFunc("PUT /api/products/{id}", h.UpdateProduct)
+	mux.HandleFunc("DELETE /api/products/{id}", h.DeleteProduct)
 
-	// --- Demo: add 100 units of laptop to the warehouse ---
-	if err := repo.AddProductToInventory(inventory.ID, product.ID, 100); err != nil {
-		log.Printf("Add stock: %v", err)
-	}
-	log.Printf("Added 100 units of %q to %q\n", product.Name, inventory.Name)
+	// ── Inventories ───────────────────────────────────────────
+	mux.HandleFunc("POST /api/inventories", h.CreateInventory)
+	mux.HandleFunc("GET /api/inventories", h.ListInventories)
+	mux.HandleFunc("GET /api/inventories/{id}", h.GetInventory)
+	mux.HandleFunc("PUT /api/inventories/{id}", h.UpdateInventory)
+	mux.HandleFunc("DELETE /api/inventories/{id}", h.DeleteInventory)
 
-	// --- Demo: deduct 5 units ---
-	if err := repo.DeductStock(inventory.ID, product.ID, 5); err != nil {
-		log.Printf("Deduct stock: %v", err)
-	}
+	// ── Stock Operations ──────────────────────────────────────
+	mux.HandleFunc("POST /api/inventories/{invID}/products/{prodID}/stock/add", h.AddStock)
+	mux.HandleFunc("POST /api/inventories/{invID}/products/{prodID}/stock/deduct", h.DeductStock)
+	mux.HandleFunc("POST /api/inventories/{invID}/products/{prodID}/stock", h.SetStock)
+	mux.HandleFunc("GET /api/inventories/{invID}/products/{prodID}/stock", h.GetStock)
+	mux.HandleFunc("DELETE /api/inventories/{invID}/products/{prodID}", h.RemoveProductFromInventory)
+	mux.HandleFunc("GET /api/inventories/{invID}/products", h.ListProductsAtInventory)
+	mux.HandleFunc("GET /api/products/{prodID}/inventories", h.ListInventoriesForProduct)
+	mux.HandleFunc("POST /api/stock/transfer", h.TransferStock)
 
-	// --- Demo: check current stock ---
-	stock, err := repo.GetStock(inventory.ID, product.ID)
-	if err != nil {
-		log.Printf("Get stock: %v", err)
-	} else {
-		log.Printf("Current stock: %d units of %q at %q\n", stock.Quantity, product.Name, inventory.Name)
+	// ── Start Server ──────────────────────────────────────────
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
-	log.Println("Inventory system is ready!")
+	log.Printf("Inventory API server starting on :%s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
 }
