@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ddmas26/inventory/internal/dtos"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -142,27 +143,8 @@ func (r *Repository) DeleteInventory(id uuid.UUID) error {
 }
 
 // =============================================================================
-// Stock Operations (InventoryProduct)
+// Stock Operations
 // =============================================================================
-
-// AddProductToInventory links a product to an inventory with a quantity.
-// Uses ON CONFLICT (upsert) — if the row already exists the quantity is added.
-func (r *Repository) AddProductToInventory(inventoryID, productID uuid.UUID, quantity int) error {
-	if quantity < 0 {
-		return errors.New("quantity cannot be negative")
-	}
-
-	ip := InventoryProduct{
-		InventoryID: inventoryID,
-		ProductID:   productID,
-		Quantity:    quantity,
-	}
-
-	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "inventory_id"}, {Name: "product_id"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{"quantity": gorm.Expr("inventory_products.quantity + ?", quantity)}),
-	}).Create(&ip).Error
-}
 
 // SetProductStock sets an absolute quantity (overwrites).
 func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity int) error {
@@ -170,7 +152,7 @@ func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity 
 		return errors.New("quantity cannot be negative")
 	}
 
-	ip := InventoryProduct{
+	ip := Stock{
 		InventoryID: inventoryID,
 		ProductID:   productID,
 		Quantity:    quantity,
@@ -185,7 +167,7 @@ func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity 
 // RemoveProductFromInventory deletes the inventory-product link entirely.
 func (r *Repository) RemoveProductFromInventory(inventoryID, productID uuid.UUID) error {
 	result := r.db.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
-		Delete(&InventoryProduct{})
+		Delete(&Stock{})
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("stock entry not found: %w", ErrNotFound)
 	}
@@ -193,8 +175,8 @@ func (r *Repository) RemoveProductFromInventory(inventoryID, productID uuid.UUID
 }
 
 // GetStock returns the quantity of a specific product at a specific inventory.
-func (r *Repository) GetStock(inventoryID, productID uuid.UUID) (*InventoryProduct, error) {
-	var ip InventoryProduct
+func (r *Repository) GetStock(inventoryID, productID uuid.UUID) (*Stock, error) {
+	var ip Stock
 	err := r.db.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).First(&ip).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("stock entry not found: %w", ErrNotFound)
@@ -202,22 +184,94 @@ func (r *Repository) GetStock(inventoryID, productID uuid.UUID) (*InventoryProdu
 	return &ip, err
 }
 
-// ListProductsAtInventory returns all products stocked at a given inventory with quantities.
-func (r *Repository) ListProductsAtInventory(inventoryID uuid.UUID) ([]InventoryProduct, error) {
-	var items []InventoryProduct
-	err := r.db.Preload("Product").
-		Where("inventory_id = ?", inventoryID).
-		Find(&items).Error
-	return items, err
-}
+// ListStock returns stock entries with optional filters, ordering, and pagination.
+func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, int64, error) {
+	query := r.db.Table("stock").
+		Select("stock.*, products.name as product_name, inventories.name as inventory_name").
+		Joins("LEFT JOIN products ON products.id = stock.product_id").
+		Joins("LEFT JOIN inventories ON inventories.id = stock.inventory_id")
 
-// ListInventoriesForProduct returns all inventories that carry a given product.
-func (r *Repository) ListInventoriesForProduct(productID uuid.UUID) ([]InventoryProduct, error) {
-	var items []InventoryProduct
-	err := r.db.Preload("Inventory").
-		Where("product_id = ?", productID).
-		Find(&items).Error
-	return items, err
+	if filter.InventoryID != nil {
+		query = query.Where("stock.inventory_id = ?", *filter.InventoryID)
+	}
+	if filter.ProductID != nil {
+		query = query.Where("stock.product_id = ?", *filter.ProductID)
+	}
+	if filter.CreatedFrom != nil {
+		query = query.Where("stock.created_at >= ?", *filter.CreatedFrom)
+	}
+	if filter.CreatedTo != nil {
+		query = query.Where("stock.created_at <= ?", *filter.CreatedTo)
+	}
+	if filter.Search != "" {
+		query = query.Where("products.name ILIKE ?", "%"+filter.Search+"%")
+	}
+
+	// Count total before pagination
+	var total int64
+	countQuery := r.db.Table("stock").
+		Joins("LEFT JOIN products ON products.id = stock.product_id")
+	if filter.InventoryID != nil {
+		countQuery = countQuery.Where("stock.inventory_id = ?", *filter.InventoryID)
+	}
+	if filter.ProductID != nil {
+		countQuery = countQuery.Where("stock.product_id = ?", *filter.ProductID)
+	}
+	if filter.CreatedFrom != nil {
+		countQuery = countQuery.Where("stock.created_at >= ?", *filter.CreatedFrom)
+	}
+	if filter.CreatedTo != nil {
+		countQuery = countQuery.Where("stock.created_at <= ?", *filter.CreatedTo)
+	}
+	if filter.Search != "" {
+		countQuery = countQuery.Where("products.name ILIKE ?", "%"+filter.Search+"%")
+	}
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Ordering
+	orderBy := filter.OrderBy
+	if orderBy == "" {
+		orderBy = "stock.created_at"
+	}
+	sort := filter.Sort
+	if sort != "asc" && sort != "ASC" {
+		sort = "DESC"
+	}
+	query = query.Order(orderBy + " " + sort)
+
+	// Pagination
+	if filter.Limit <= 0 || filter.Limit > 100 {
+		filter.Limit = 20
+	}
+	query = query.Offset(filter.Offset).Limit(filter.Limit)
+
+	type stockRow struct {
+		Stock
+		ProductName   string `json:"product_name"`
+		InventoryName string `json:"inventory_name"`
+	}
+
+	var rows []stockRow
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	dtosItems := make([]dtos.StockDto, 0, len(rows))
+	for _, row := range rows {
+		dtosItems = append(dtosItems, dtos.StockDto{
+			InventoryID:   row.InventoryID,
+			ProductID:     row.ProductID,
+			ProductName:   row.ProductName,
+			InventoryName: row.InventoryName,
+			Quantity:      row.Quantity,
+			CreatedAt:     row.CreatedAt,
+			UpdatedAt:     row.UpdatedAt,
+		})
+	}
+
+	return dtosItems, total, nil
 }
 
 // =============================================================================
@@ -232,7 +286,7 @@ func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) e
 	}
 
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var ip InventoryProduct
+		var ip Stock
 
 		// SELECT ... FOR UPDATE locks the row against concurrent writes
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -252,24 +306,22 @@ func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) e
 }
 
 // AddStock atomically adds quantity to a product at an inventory.
+// Creates a new stock entry if one doesn't exist yet.
 func (r *Repository) AddStock(inventoryID, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("addition amount must be positive")
 	}
 
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		var ip InventoryProduct
+	ip := Stock{
+		InventoryID: inventoryID,
+		ProductID:   productID,
+		Quantity:    amount,
+	}
 
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
-			First(&ip).Error
-		if err != nil {
-			return fmt.Errorf("stock entry not found: %w", ErrNotFound)
-		}
-
-		ip.Quantity += amount
-		return tx.Save(&ip).Error
-	})
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "inventory_id"}, {Name: "product_id"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{"quantity": gorm.Expr("\"stock\".quantity + ?", amount)}),
+	}).Create(&ip).Error
 }
 
 // TransferStock moves quantity from one inventory to another atomically.
@@ -285,7 +337,7 @@ func (r *Repository) TransferStock(fromInv, toInv, productID uuid.UUID, amount i
 			return fmt.Errorf("deduct from source: %w", err)
 		}
 
-		if err := repo.AddProductToInventory(toInv, productID, amount); err != nil {
+		if err := repo.AddStock(toInv, productID, amount); err != nil {
 			return fmt.Errorf("add to destination: %w", err)
 		}
 

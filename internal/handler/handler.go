@@ -5,15 +5,17 @@ import (
 	"net/http"
 
 	"github.com/ddmas26/inventory/internal/database"
+	"github.com/ddmas26/inventory/internal/service"
 )
 
-// Handler holds a reference to the repository and provides common helpers.
+// Handler holds services and provides common HTTP helpers.
 type Handler struct {
-	Repo *database.Repository
+	Repo     *database.Repository
+	StockSvc *service.StockService
 }
 
-func NewHandler(repo *database.Repository) *Handler {
-	return &Handler{Repo: repo}
+func NewHandler(repo *database.Repository, stockSvc *service.StockService) *Handler {
+	return &Handler{Repo: repo, StockSvc: stockSvc}
 }
 
 // respond writes a JSON response with the given status code.

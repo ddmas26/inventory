@@ -38,7 +38,7 @@ func Migrate(db *gorm.DB) error {
 	err := db.AutoMigrate(
 		&Product{},
 		&Inventory{},
-		&InventoryProduct{},
+		&Stock{},
 	)
 	if err != nil {
 		return fmt.Errorf("auto-migration failed: %w", err)

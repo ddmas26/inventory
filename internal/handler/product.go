@@ -77,11 +77,16 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 
 // ListProducts handles GET /api/products
 func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 100 {
-		limit = 20
+	pageIndex, _ := strconv.Atoi(r.URL.Query().Get("page_index"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if pageIndex <= 1 {
+		pageIndex = 1
 	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := (pageIndex - 1) * pageSize
+	limit := pageSize
 
 	products, total, err := h.Repo.ListProducts(offset, limit)
 	if err != nil {
@@ -94,10 +99,10 @@ func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond(w, http.StatusOK, map[string]interface{}{
-		"data":   products,
-		"total":  total,
-		"offset": offset,
-		"limit":  limit,
+		"data":       products,
+		"total":      total,
+		"page_index": pageIndex,
+		"page_size":  pageSize,
 	})
 }
 

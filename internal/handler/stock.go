@@ -3,21 +3,35 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/ddmas26/inventory/internal/database"
+	"github.com/ddmas26/inventory/internal/dtos"
 	"github.com/google/uuid"
 )
 
 type addStockRequest struct {
-	Quantity int `json:"quantity"`
+	InventoryID uuid.UUID `json:"inventory_id"`
+	ProductID   uuid.UUID `json:"product_id"`
+	Quantity    int       `json:"quantity"`
 }
 
 type deductStockRequest struct {
-	Quantity int `json:"quantity"`
+	InventoryID uuid.UUID `json:"inventory_id"`
+	ProductID   uuid.UUID `json:"product_id"`
+	Quantity    int       `json:"quantity"`
 }
 
 type setStockRequest struct {
-	Quantity int `json:"quantity"`
+	InventoryID uuid.UUID `json:"inventory_id"`
+	ProductID   uuid.UUID `json:"product_id"`
+	Quantity    int       `json:"quantity"`
+}
+
+type removeStockRequest struct {
+	InventoryID uuid.UUID `json:"inventory_id"`
+	ProductID   uuid.UUID `json:"product_id"`
 }
 
 type transferStockRequest struct {
@@ -27,20 +41,8 @@ type transferStockRequest struct {
 	Quantity        int       `json:"quantity"`
 }
 
-// AddStock handles POST /api/inventories/{invID}/products/{prodID}/stock/add
+// AddStock handles POST /api/stock/add
 func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
-	invID, err := uuid.Parse(r.PathValue("invID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid inventory id")
-		return
-	}
-
-	prodID, err := uuid.Parse(r.PathValue("prodID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid product id")
-		return
-	}
-
 	var req addStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -52,16 +54,12 @@ func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Repo.AddStock(invID, prodID, req.Quantity); err != nil {
-		if errors.Is(err, database.ErrNotFound) {
-			respondError(w, http.StatusNotFound, "stock entry not found")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, err.Error())
+	if err := h.StockSvc.AddStock(req.InventoryID, req.ProductID, req.Quantity); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.Repo.GetStock(invID, prodID)
+	stock, err := h.StockSvc.GetStock(req.InventoryID, req.ProductID)
 	if err != nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock added successfully"})
 		return
@@ -70,20 +68,8 @@ func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, stock)
 }
 
-// DeductStock handles POST /api/inventories/{invID}/products/{prodID}/stock/deduct
+// DeductStock handles POST /api/stock/deduct
 func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
-	invID, err := uuid.Parse(r.PathValue("invID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid inventory id")
-		return
-	}
-
-	prodID, err := uuid.Parse(r.PathValue("prodID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid product id")
-		return
-	}
-
 	var req deductStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -95,16 +81,12 @@ func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Repo.DeductStock(invID, prodID, req.Quantity); err != nil {
-		if errors.Is(err, database.ErrNotFound) {
-			respondError(w, http.StatusNotFound, "stock entry not found")
-			return
-		}
+	if err := h.StockSvc.DeductStock(req.InventoryID, req.ProductID, req.Quantity); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.Repo.GetStock(invID, prodID)
+	stock, err := h.StockSvc.GetStock(req.InventoryID, req.ProductID)
 	if err != nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock deducted successfully"})
 		return
@@ -113,20 +95,8 @@ func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, stock)
 }
 
-// SetStock handles POST /api/inventories/{invID}/products/{prodID}/stock
+// SetStock handles POST /api/stock/set
 func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
-	invID, err := uuid.Parse(r.PathValue("invID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid inventory id")
-		return
-	}
-
-	prodID, err := uuid.Parse(r.PathValue("prodID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid product id")
-		return
-	}
-
 	var req setStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -138,12 +108,12 @@ func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Repo.SetProductStock(invID, prodID, req.Quantity); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+	if err := h.StockSvc.SetStock(req.InventoryID, req.ProductID, req.Quantity); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.Repo.GetStock(invID, prodID)
+	stock, err := h.StockSvc.GetStock(req.InventoryID, req.ProductID)
 	if err != nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock set successfully"})
 		return
@@ -152,99 +122,100 @@ func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, stock)
 }
 
-// GetStock handles GET /api/inventories/{invID}/products/{prodID}/stock
-func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
-	invID, err := uuid.Parse(r.PathValue("invID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid inventory id")
-		return
-	}
+// ListStock handles GET /api/stock
+// Query params: inventory_id, product_id, created_from, created_to,
+//
+//	order_by, sort, page_index, page_size
+func (h *Handler) ListStock(w http.ResponseWriter, r *http.Request) {
+	filter := dtos.ListStockFilter{}
 
-	prodID, err := uuid.Parse(r.PathValue("prodID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid product id")
-		return
-	}
-
-	stock, err := h.Repo.GetStock(invID, prodID)
-	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
-			respondError(w, http.StatusNotFound, "stock entry not found")
+	if invID := r.URL.Query().Get("inventory_id"); invID != "" {
+		id, err := uuid.Parse(invID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid inventory id")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "failed to get stock")
+		filter.InventoryID = &id
+	}
+
+	if prodID := r.URL.Query().Get("product_id"); prodID != "" {
+		id, err := uuid.Parse(prodID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid product id")
+			return
+		}
+		filter.ProductID = &id
+	}
+
+	if from := r.URL.Query().Get("created_from"); from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid created_from format, use RFC3339")
+			return
+		}
+		filter.CreatedFrom = &t
+	}
+
+	if to := r.URL.Query().Get("created_to"); to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid created_to format, use RFC3339")
+			return
+		}
+		filter.CreatedTo = &t
+	}
+
+	filter.Search = r.URL.Query().Get("search")
+	filter.OrderBy = r.URL.Query().Get("order_by")
+	filter.Sort = r.URL.Query().Get("sort")
+
+	pageIndex, _ := strconv.Atoi(r.URL.Query().Get("page_index"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if pageIndex <= 1 {
+		pageIndex = 1
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+	filter.Offset = (pageIndex - 1) * pageSize
+	filter.Limit = pageSize
+
+	items, total, err := h.StockSvc.ListStock(filter)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list stock")
 		return
 	}
 
-	respond(w, http.StatusOK, stock)
+	if items == nil {
+		items = []dtos.StockDto{}
+	}
+
+	respond(w, http.StatusOK, map[string]interface{}{
+		"data":       items,
+		"total":      total,
+		"page_index": pageIndex,
+		"page_size":  pageSize,
+	})
 }
 
-// RemoveProductFromInventory handles DELETE /api/inventories/{invID}/products/{prodID}
-func (h *Handler) RemoveProductFromInventory(w http.ResponseWriter, r *http.Request) {
-	invID, err := uuid.Parse(r.PathValue("invID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid inventory id")
+// RemoveStock handles POST /api/stock/remove
+func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
+	var req removeStockRequest
+	if err := decode(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
-	prodID, err := uuid.Parse(r.PathValue("prodID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid product id")
-		return
-	}
-
-	if err := h.Repo.RemoveProductFromInventory(invID, prodID); err != nil {
+	if err := h.StockSvc.RemoveStock(req.InventoryID, req.ProductID); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "stock entry not found")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "failed to remove product from inventory")
+		respondError(w, http.StatusInternalServerError, "failed to remove stock")
 		return
 	}
 
 	respond(w, http.StatusNoContent, nil)
-}
-
-// ListProductsAtInventory handles GET /api/inventories/{invID}/products
-func (h *Handler) ListProductsAtInventory(w http.ResponseWriter, r *http.Request) {
-	invID, err := uuid.Parse(r.PathValue("invID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid inventory id")
-		return
-	}
-
-	items, err := h.Repo.ListProductsAtInventory(invID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to list products")
-		return
-	}
-
-	if items == nil {
-		items = []database.InventoryProduct{}
-	}
-
-	respond(w, http.StatusOK, items)
-}
-
-// ListInventoriesForProduct handles GET /api/products/{prodID}/inventories
-func (h *Handler) ListInventoriesForProduct(w http.ResponseWriter, r *http.Request) {
-	prodID, err := uuid.Parse(r.PathValue("prodID"))
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid product id")
-		return
-	}
-
-	items, err := h.Repo.ListInventoriesForProduct(prodID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to list inventories")
-		return
-	}
-
-	if items == nil {
-		items = []database.InventoryProduct{}
-	}
-
-	respond(w, http.StatusOK, items)
 }
 
 // TransferStock handles POST /api/stock/transfer
@@ -260,11 +231,7 @@ func (h *Handler) TransferStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Repo.TransferStock(req.FromInventoryID, req.ToInventoryID, req.ProductID, req.Quantity); err != nil {
-		if errors.Is(err, database.ErrNotFound) {
-			respondError(w, http.StatusNotFound, err.Error())
-			return
-		}
+	if err := h.StockSvc.TransferStock(req.FromInventoryID, req.ToInventoryID, req.ProductID, req.Quantity); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

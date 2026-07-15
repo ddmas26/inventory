@@ -18,7 +18,7 @@ type Product struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
 	// Many-to-many: which inventories carry this product and in what quantity
-	Inventories []InventoryProduct `gorm:"foreignKey:ProductID" json:"inventories,omitempty"`
+	Inventories []Stock `gorm:"foreignKey:ProductID" json:"inventories,omitempty"`
 }
 
 // BeforeCreate hook ensures UUID is set if empty.
@@ -41,7 +41,7 @@ type Inventory struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
 	// Many-to-many: which products are stocked here and in what quantity
-	Products []InventoryProduct `gorm:"foreignKey:InventoryID" json:"products,omitempty"`
+	Products []Stock `gorm:"foreignKey:InventoryID" json:"products,omitempty"`
 }
 
 // BeforeCreate hook ensures UUID is set if empty.
@@ -52,9 +52,9 @@ func (i *Inventory) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// InventoryProduct is the join table linking Inventory and Product,
-// carrying the quantity of each product at each inventory location.
-type InventoryProduct struct {
+// Stock represents the quantity of a product at an inventory location.
+// It is the join table linking Inventory and Product.
+type Stock struct {
 	InventoryID uuid.UUID `gorm:"type:uuid;primaryKey;uniqueIndex:idx_inv_prod" json:"inventory_id"`
 	ProductID   uuid.UUID `gorm:"type:uuid;primaryKey;uniqueIndex:idx_inv_prod" json:"product_id"`
 	Quantity    int       `gorm:"not null;default:0" json:"quantity"`
@@ -64,4 +64,8 @@ type InventoryProduct struct {
 	// Belongs-to relationships
 	Inventory Inventory `gorm:"foreignKey:InventoryID;constraint:OnDelete:CASCADE" json:"-"`
 	Product   Product   `gorm:"foreignKey:ProductID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (Stock) TableName() string {
+	return "stock"
 }

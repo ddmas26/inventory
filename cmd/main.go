@@ -8,6 +8,7 @@ import (
 	"github.com/ddmas26/inventory/internal/config"
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/handler"
+	"github.com/ddmas26/inventory/internal/service"
 )
 
 func main() {
@@ -25,9 +26,10 @@ func main() {
 		log.Fatalf("Migration failed: %v", err)
 	}
 
-	// Initialize repository and handler
+	// Initialize repository, services, and handler
 	repo := database.NewRepository(db)
-	h := handler.NewHandler(repo)
+	stockSvc := service.NewStockService(repo)
+	h := handler.NewHandler(repo, stockSvc)
 
 	// Set up routes
 	mux := http.NewServeMux()
@@ -45,16 +47,17 @@ func main() {
 	mux.HandleFunc("GET /api/inventories/{id}", h.GetInventory)
 	mux.HandleFunc("PUT /api/inventories/{id}", h.UpdateInventory)
 	mux.HandleFunc("DELETE /api/inventories/{id}", h.DeleteInventory)
+	// mux.HandleFunc("GET /api/inventories/dashboard", h.)
 
 	// ── Stock Operations ──────────────────────────────────────
-	mux.HandleFunc("POST /api/inventories/{invID}/products/{prodID}/stock/add", h.AddStock)
-	mux.HandleFunc("POST /api/inventories/{invID}/products/{prodID}/stock/deduct", h.DeductStock)
-	mux.HandleFunc("POST /api/inventories/{invID}/products/{prodID}/stock", h.SetStock)
-	mux.HandleFunc("GET /api/inventories/{invID}/products/{prodID}/stock", h.GetStock)
-	mux.HandleFunc("DELETE /api/inventories/{invID}/products/{prodID}", h.RemoveProductFromInventory)
-	mux.HandleFunc("GET /api/inventories/{invID}/products", h.ListProductsAtInventory)
-	mux.HandleFunc("GET /api/products/{prodID}/inventories", h.ListInventoriesForProduct)
+	mux.HandleFunc("POST /api/stock/add", h.AddStock)
+	mux.HandleFunc("POST /api/stock/deduct", h.DeductStock)
+	mux.HandleFunc("POST /api/stock/set", h.SetStock)
+	mux.HandleFunc("GET /api/stock", h.ListStock)
+	mux.HandleFunc("POST /api/stock/remove", h.RemoveStock)
 	mux.HandleFunc("POST /api/stock/transfer", h.TransferStock)
+
+	// ── Dashboard ──────────────────────────────────────
 
 	// ── Start Server ──────────────────────────────────────────
 	port := os.Getenv("PORT")
