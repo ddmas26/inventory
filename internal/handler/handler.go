@@ -10,12 +10,14 @@ import (
 
 // Handler holds services and provides common HTTP helpers.
 type Handler struct {
-	Repo     *database.Repository
-	StockSvc *service.StockService
+	Repo         *database.Repository
+	StockSvc     *service.StockService
+	ProductSvc   *service.ProductService
+	InventorySvc *service.InventoryService
 }
 
-func NewHandler(repo *database.Repository, stockSvc *service.StockService) *Handler {
-	return &Handler{Repo: repo, StockSvc: stockSvc}
+func NewHandler(repo *database.Repository, stockSvc *service.StockService, productSvc *service.ProductService, inventorySvc *service.InventoryService) *Handler {
+	return &Handler{Repo: repo, StockSvc: stockSvc, ProductSvc: productSvc, InventorySvc: inventorySvc}
 }
 
 // respond writes a JSON response with the given status code.

@@ -29,7 +29,9 @@ func main() {
 	// Initialize repository, services, and handler
 	repo := database.NewRepository(db)
 	stockSvc := service.NewStockService(repo)
-	h := handler.NewHandler(repo, stockSvc)
+	productSvc := service.NewProductService(repo)
+	inventorySvc := service.NewInventoryService(repo)
+	h := handler.NewHandler(repo, stockSvc, productSvc, inventorySvc)
 
 	// Set up routes
 	mux := http.NewServeMux()

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/google/uuid"
@@ -32,28 +31,13 @@ func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		respondError(w, http.StatusBadRequest, "name is required")
+	inv, err := h.InventorySvc.CreateInventory(req.Name, req.Address, req.Latitude, req.Longitude)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	inventory := &database.Inventory{
-		Name:      req.Name,
-		Address:   req.Address,
-		Latitude:  req.Latitude,
-		Longitude: req.Longitude,
-	}
-
-	if err := h.Repo.CreateInventory(inventory); err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
-			respondError(w, http.StatusConflict, "inventory with this name already exists")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, "failed to create inventory")
-		return
-	}
-
-	respond(w, http.StatusCreated, inventory)
+	respond(w, http.StatusCreated, inv)
 }
 
 // GetInventory handles GET /api/inventories/{id}
@@ -64,7 +48,7 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inventory, err := h.Repo.GetInventoryByID(id)
+	inventory, err := h.InventorySvc.GetByID(id)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
@@ -90,7 +74,7 @@ func (h *Handler) ListInventories(w http.ResponseWriter, r *http.Request) {
 	offset := (pageIndex - 1) * pageSize
 	limit := pageSize
 
-	inventories, total, err := h.Repo.ListInventories(offset, limit)
+	inventories, total, err := h.InventorySvc.List(offset, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list inventories")
 		return
@@ -130,20 +114,16 @@ func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
 		Longitude: req.Longitude,
 	}
 
-	if err := h.Repo.UpdateInventory(inventory); err != nil {
+	if err := h.InventorySvc.Update(inventory); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
 			return
 		}
-		if strings.Contains(err.Error(), "duplicate key") {
-			respondError(w, http.StatusConflict, "inventory with this name already exists")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, "failed to update inventory")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	updated, err := h.Repo.GetInventoryByID(id)
+	updated, err := h.InventorySvc.GetByID(id)
 	if err != nil {
 		respond(w, http.StatusOK, inventory)
 		return
@@ -160,7 +140,7 @@ func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Repo.DeleteInventory(id); err != nil {
+	if err := h.InventorySvc.Delete(id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
 			return
