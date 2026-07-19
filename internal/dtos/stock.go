@@ -19,6 +19,7 @@ type ListStockFilter struct {
 }
 
 type StockDto struct {
+	ID            uuid.UUID `json:"id"`
 	InventoryID   uuid.UUID `json:"inventory_id"`
 	ProductID     uuid.UUID `json:"product_id"`
 	ProductName   string    `json:"product_name"`

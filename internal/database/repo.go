@@ -124,6 +124,18 @@ func (r *Repository) ListInventories(offset, limit int) ([]Inventory, int64, err
 	return inventories, total, err
 }
 
+func (r *Repository) ListAllInventories() ([]Inventory, error) {
+	var inventories []Inventory
+
+	err := r.db.Order("created_at DESC").Find(&inventories).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return inventories, err
+}
+
 // UpdateInventory updates the name, address, and coordinates.
 func (r *Repository) UpdateInventory(inv *Inventory) error {
 	result := r.db.Model(inv).Select("name", "address", "latitude", "longitude").Updates(inv)
@@ -150,6 +162,15 @@ func (r *Repository) DeleteInventory(id uuid.UUID) error {
 func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity int) error {
 	if quantity < 0 {
 		return errors.New("quantity cannot be negative")
+	}
+
+	if quantity == 0 {
+		result := r.db.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
+			Delete(&Stock{})
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("stock entry not found: %w", ErrNotFound)
+		}
+		return nil
 	}
 
 	ip := Stock{
@@ -189,7 +210,8 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 	query := r.db.Table("stock").
 		Select("stock.*, products.name as product_name, inventories.name as inventory_name").
 		Joins("LEFT JOIN products ON products.id = stock.product_id").
-		Joins("LEFT JOIN inventories ON inventories.id = stock.inventory_id")
+		Joins("LEFT JOIN inventories ON inventories.id = stock.inventory_id").
+		Where("stock.quantity > 0")
 
 	if filter.InventoryID != nil {
 		query = query.Where("stock.inventory_id = ?", *filter.InventoryID)
@@ -210,7 +232,8 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 	// Count total before pagination
 	var total int64
 	countQuery := r.db.Table("stock").
-		Joins("LEFT JOIN products ON products.id = stock.product_id")
+		Joins("LEFT JOIN products ON products.id = stock.product_id").
+		Where("stock.quantity > 0")
 	if filter.InventoryID != nil {
 		countQuery = countQuery.Where("stock.inventory_id = ?", *filter.InventoryID)
 	}
@@ -261,6 +284,7 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 	dtosItems := make([]dtos.StockDto, 0, len(rows))
 	for _, row := range rows {
 		dtosItems = append(dtosItems, dtos.StockDto{
+			ID:            row.ID,
 			InventoryID:   row.InventoryID,
 			ProductID:     row.ProductID,
 			ProductName:   row.ProductName,
@@ -272,6 +296,86 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 	}
 
 	return dtosItems, total, nil
+}
+
+// GetDashboardData returns aggregated counts and low-stock items for the dashboard.
+func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
+	dto := &dtos.InventoryDashboardDto{}
+
+	// --- Counts ---
+
+	// Total value (sum of quantity * price)
+	var totalValue float64
+	r.db.Table("stock").
+		Select("COALESCE(SUM(stock.quantity * products.price), 0)").
+		Joins("JOIN products ON products.id = stock.product_id").
+		Where("products.deleted_at IS NULL").
+		Scan(&totalValue)
+	dto.Counts.TotalValue = totalValue
+
+	// Active products (distinct products with stock quantity > 0)
+	var activeProducts int64
+	r.db.Table("stock").
+		Select("DISTINCT product_id").
+		Where("quantity > 0").
+		Count(&activeProducts)
+	dto.Counts.ActiveProducts = int(activeProducts)
+
+	// Locations count
+	var locationsCount int64
+	r.db.Model(&Inventory{}).Count(&locationsCount)
+	dto.Counts.Locations = int(locationsCount)
+
+	// --- Lowest stock items (top 10 with least quantity) ---
+	type lowStockRow struct {
+		ID            uuid.UUID
+		ProductName   string
+		InventoryName string
+		Quantity      int
+	}
+
+	// Count truly low stock items (quantity < 5) for the badge
+	var lowStockCount int64
+	r.db.Table("stock").
+		Joins("JOIN products ON products.id = stock.product_id").
+		Joins("JOIN inventories ON inventories.id = stock.inventory_id").
+		Where("stock.quantity < ?", 5).
+		Where("products.deleted_at IS NULL").
+		Where("inventories.deleted_at IS NULL").
+		Count(&lowStockCount)
+	dto.Counts.LowStocks = int(lowStockCount)
+
+	// Fetch 10 items with the least stock (lowest quantity first)
+	var lowRows []lowStockRow
+	r.db.Table("stock").
+		Select("stock.id, products.name as product_name, inventories.name as inventory_name, stock.quantity").
+		Joins("JOIN products ON products.id = stock.product_id").
+		Joins("JOIN inventories ON inventories.id = stock.inventory_id").
+		Where("products.deleted_at IS NULL").
+		Where("inventories.deleted_at IS NULL").
+		Order("stock.quantity ASC").
+		Limit(10).
+		Find(&lowRows)
+
+	dto.Stocks = make([]dtos.LowStockDto, 0, len(lowRows))
+	for _, row := range lowRows {
+		status := dtos.StockStatus_OK
+		switch {
+		case row.Quantity < 5:
+			status = dtos.StockStatus_LOW
+		case row.Quantity < 10:
+			status = dtos.StockStatus_NORMAL
+		}
+		dto.Stocks = append(dto.Stocks, dtos.LowStockDto{
+			ID:            row.ID,
+			ProductName:   row.ProductName,
+			InventoryName: row.InventoryName,
+			Quantity:      row.Quantity,
+			Status:        status,
+		})
+	}
+
+	return dto, nil
 }
 
 // =============================================================================
@@ -301,6 +405,12 @@ func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) e
 		}
 
 		ip.Quantity -= amount
+
+		if ip.Quantity == 0 {
+			return tx.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
+				Delete(&Stock{}).Error
+		}
+
 		return tx.Save(&ip).Error
 	})
 }

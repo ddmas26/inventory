@@ -151,3 +151,13 @@ func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
 
 	respond(w, http.StatusNoContent, nil)
 }
+
+func (h *Handler) DashboardInventory(w http.ResponseWriter, r *http.Request) {
+	dashData, err := h.InventorySvc.GetDashboardData()
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "error retrieving dashboard data")
+		return
+	}
+
+	respond(w, http.StatusOK, dashData)
+}

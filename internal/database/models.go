@@ -55,8 +55,9 @@ func (i *Inventory) BeforeCreate(tx *gorm.DB) error {
 // Stock represents the quantity of a product at an inventory location.
 // It is the join table linking Inventory and Product.
 type Stock struct {
-	InventoryID uuid.UUID `gorm:"type:uuid;primaryKey;uniqueIndex:idx_inv_prod" json:"inventory_id"`
-	ProductID   uuid.UUID `gorm:"type:uuid;primaryKey;uniqueIndex:idx_inv_prod" json:"product_id"`
+	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	InventoryID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_inv_prod" json:"inventory_id"`
+	ProductID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_inv_prod" json:"product_id"`
 	Quantity    int       `gorm:"not null;default:0" json:"quantity"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -68,4 +69,12 @@ type Stock struct {
 
 func (Stock) TableName() string {
 	return "stock"
+}
+
+// BeforeCreate hook ensures UUID is set if empty.
+func (s *Stock) BeforeCreate(tx *gorm.DB) error {
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
+	}
+	return nil
 }

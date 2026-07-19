@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ddmas26/inventory/internal/database"
+	"github.com/ddmas26/inventory/internal/dtos"
 	"github.com/google/uuid"
 )
 
@@ -55,4 +56,33 @@ func (s *InventoryService) Update(inv *database.Inventory) error {
 
 func (s *InventoryService) Delete(id uuid.UUID) error {
 	return s.repo.DeleteInventory(id)
+}
+
+func (s *InventoryService) ListAll() ([]database.Inventory, error) {
+	return s.repo.ListAllInventories()
+}
+
+// GetDashboardData returns aggregated dashboard data including counts, low-stock items, and all inventory locations.
+func (s *InventoryService) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
+	inventories, err := s.repo.ListAllInventories()
+	if err != nil {
+		return nil, fmt.Errorf("list inventories: %w", err)
+	}
+
+	dashData, err := s.repo.GetDashboardData()
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard data: %w", err)
+	}
+
+	dashData.Inventories = make([]dtos.InventoryLocationsDashboard, 0, len(inventories))
+	for _, inv := range inventories {
+		dashData.Inventories = append(dashData.Inventories, dtos.InventoryLocationsDashboard{
+			ID:        inv.ID,
+			Name:      inv.Name,
+			Latitude:  inv.Latitude,
+			Longitude: inv.Longitude,
+		})
+	}
+
+	return dashData, nil
 }

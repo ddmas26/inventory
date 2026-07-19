@@ -190,7 +190,7 @@ export default function StockPage() {
               <Table
                 dataSource={stockList}
                 columns={columns}
-                rowKey={(r) => `${r.inventory_id}-${r.product_id}`}
+                rowKey={(r) => r.id}
                 loading={isLoading}
                 locale={{ emptyText: 'No stock entries found' }}
                 pagination={{

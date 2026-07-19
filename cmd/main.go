@@ -49,7 +49,7 @@ func main() {
 	mux.HandleFunc("GET /api/inventories/{id}", h.GetInventory)
 	mux.HandleFunc("PUT /api/inventories/{id}", h.UpdateInventory)
 	mux.HandleFunc("DELETE /api/inventories/{id}", h.DeleteInventory)
-	// mux.HandleFunc("GET /api/inventories/dashboard", h.)
+	mux.HandleFunc("GET /api/inventories/dashboard", h.DashboardInventory)
 
 	// ── Stock Operations ──────────────────────────────────────
 	mux.HandleFunc("POST /api/stock/add", h.AddStock)
