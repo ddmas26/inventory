@@ -23,9 +23,15 @@ type InventoryLocationsDashboard struct {
 }
 
 type LowStockDto struct {
-	ID            uuid.UUID   `json:"id"`
-	ProductName   string      `json:"product_name"`
-	InventoryName string      `json:"inventory_name"`
-	Quantity      int         `json:"quantity"`
-	Status        StockStatus `json:"stats"`
+	ID              uuid.UUID `json:"id"`
+	ProductID       uuid.UUID `json:"product_id"`
+	ProductName     string    `json:"product_name"`
+	ProductImageURL string    `json:"product_image_url"`
+	InventoryName   string    `json:"inventory_name"`
+	Quantity        int       `json:"quantity"`
+	Threshold       int       `json:"threshold"`
+	// NoStock is true when the product has no stock entries at all. Those rows have
+	// no inventory and their ID is the product ID.
+	NoStock bool        `json:"no_stock"`
+	Status  StockStatus `json:"stats"`
 }

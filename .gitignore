@@ -1,0 +1,7 @@
+# Uploaded product images (created at runtime)
+uploads/
+
+# Go build artifacts
+*.exe
+*.test
+*.out

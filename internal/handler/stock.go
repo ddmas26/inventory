@@ -43,6 +43,10 @@ type transferStockRequest struct {
 
 // AddStock handles POST /api/stock/add
 func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "stock.create") {
+		return
+	}
+
 	var req addStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -70,6 +74,10 @@ func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
 
 // DeductStock handles POST /api/stock/deduct
 func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "stock.edit") {
+		return
+	}
+
 	var req deductStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -97,6 +105,10 @@ func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
 
 // SetStock handles POST /api/stock/set
 func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "stock.edit") {
+		return
+	}
+
 	var req setStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -123,10 +135,11 @@ func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListStock handles GET /api/stock
-// Query params: inventory_id, product_id, created_from, created_to,
-//
-//	order_by, sort, page_index, page_size
 func (h *Handler) ListStock(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "stock.read") {
+		return
+	}
+
 	filter := dtos.ListStockFilter{}
 
 	if invID := r.URL.Query().Get("inventory_id"); invID != "" {
@@ -200,6 +213,10 @@ func (h *Handler) ListStock(w http.ResponseWriter, r *http.Request) {
 
 // RemoveStock handles POST /api/stock/remove
 func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "stock.delete") {
+		return
+	}
+
 	var req removeStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -220,6 +237,10 @@ func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
 
 // TransferStock handles POST /api/stock/transfer
 func (h *Handler) TransferStock(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "stock.edit") {
+		return
+	}
+
 	var req transferStockRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")

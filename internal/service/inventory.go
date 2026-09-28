@@ -6,15 +6,17 @@ import (
 
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/dtos"
+	"github.com/ddmas26/inventory/internal/storage"
 	"github.com/google/uuid"
 )
 
 type InventoryService struct {
-	repo *database.Repository
+	repo    *database.Repository
+	storage *storage.Store
 }
 
-func NewInventoryService(repo *database.Repository) *InventoryService {
-	return &InventoryService{repo: repo}
+func NewInventoryService(repo *database.Repository, store *storage.Store) *InventoryService {
+	return &InventoryService{repo: repo, storage: store}
 }
 
 func (s *InventoryService) CreateInventory(name, address, latitude, longitude string) (*database.Inventory, error) {
@@ -72,6 +74,11 @@ func (s *InventoryService) GetDashboardData() (*dtos.InventoryDashboardDto, erro
 	dashData, err := s.repo.GetDashboardData()
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard data: %w", err)
+	}
+
+	// Turn stored image references into browser-loadable URLs.
+	for i := range dashData.Stocks {
+		dashData.Stocks[i].ProductImageURL = s.storage.URL(dashData.Stocks[i].ProductImageURL)
 	}
 
 	dashData.Inventories = make([]dtos.InventoryLocationsDashboard, 0, len(inventories))

@@ -13,7 +13,7 @@ import (
 // Connect opens a PostgreSQL connection using GORM and runs auto-migration.
 func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -33,12 +33,23 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	return db, nil
 }
 
+// EnableSQLLogging switches the GORM logger to Info mode so all queries
+// are printed. Call this after migration / seeding to avoid startup noise.
+func EnableSQLLogging(db *gorm.DB) {
+	db.Logger = db.Logger.LogMode(logger.Info)
+	log.Println("SQL query logging enabled")
+}
+
 // Migrate runs auto-migration for all models.
 func Migrate(db *gorm.DB) error {
 	err := db.AutoMigrate(
 		&Product{},
+		&ProductImage{},
 		&Inventory{},
 		&Stock{},
+		&User{},
+		&Role{},
+		&Permission{},
 	)
 	if err != nil {
 		return fmt.Errorf("auto-migration failed: %w", err)

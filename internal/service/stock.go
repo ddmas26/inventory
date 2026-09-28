@@ -6,16 +6,18 @@ import (
 
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/dtos"
+	"github.com/ddmas26/inventory/internal/storage"
 	"github.com/google/uuid"
 )
 
 // StockService handles business logic for stock operations.
 type StockService struct {
-	repo *database.Repository
+	repo    *database.Repository
+	storage *storage.Store
 }
 
-func NewStockService(repo *database.Repository) *StockService {
-	return &StockService{repo: repo}
+func NewStockService(repo *database.Repository, store *storage.Store) *StockService {
+	return &StockService{repo: repo, storage: store}
 }
 
 // AddStock adds quantity to a product at an inventory. Creates entry if missing.
@@ -64,7 +66,16 @@ func (s *StockService) GetStock(inventoryID, productID uuid.UUID) (*database.Sto
 
 // ListStock returns filtered, paginated stock entries.
 func (s *StockService) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, int64, error) {
-	return s.repo.ListStock(filter)
+	items, total, err := s.repo.ListStock(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	for i := range items {
+		items[i].ProductImageURL = s.storage.URL(items[i].ProductImageURL)
+	}
+
+	return items, total, nil
 }
 
 // RemoveStock deletes a stock entry.

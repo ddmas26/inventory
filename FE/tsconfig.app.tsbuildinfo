@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/api/client.ts","./src/api/inventories.ts","./src/api/products.ts","./src/api/stock.ts","./src/components/Layout.tsx","./src/pages/Dashboard.tsx","./src/pages/Inventories.tsx","./src/pages/Products.tsx","./src/pages/Stock.tsx","./src/types/index.ts"],"version":"5.7.3"}

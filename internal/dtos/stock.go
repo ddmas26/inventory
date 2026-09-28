@@ -18,13 +18,26 @@ type ListStockFilter struct {
 	Limit       int
 }
 
+type ListFilter struct {
+	InventoryID *uuid.UUID
+	ProductID   *uuid.UUID
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	Search      string // searches product_name
+	OrderBy     string // "created_at", "updated_at", "quantity", "product_name", "inventory_name"
+	Sort        string // "asc" or "desc"
+	Offset      int
+	Limit       int
+}
+
 type StockDto struct {
-	ID            uuid.UUID `json:"id"`
-	InventoryID   uuid.UUID `json:"inventory_id"`
-	ProductID     uuid.UUID `json:"product_id"`
-	ProductName   string    `json:"product_name"`
-	InventoryName string    `json:"inventory_name"`
-	Quantity      int       `json:"quantity"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              uuid.UUID `json:"id"`
+	InventoryID     uuid.UUID `json:"inventory_id"`
+	ProductID       uuid.UUID `json:"product_id"`
+	ProductName     string    `json:"product_name"`
+	ProductImageURL string    `json:"product_image_url"`
+	InventoryName   string    `json:"inventory_name"`
+	Quantity        int       `json:"quantity"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }

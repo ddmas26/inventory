@@ -25,6 +25,10 @@ type updateInventoryRequest struct {
 
 // CreateInventory handles POST /api/inventories
 func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "inventories.create") {
+		return
+	}
+
 	var req createInventoryRequest
 	if err := decode(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON body")
@@ -42,6 +46,10 @@ func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
 
 // GetInventory handles GET /api/inventories/{id}
 func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "inventories.read") {
+		return
+	}
+
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid inventory id")
@@ -63,6 +71,10 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 
 // ListInventories handles GET /api/inventories
 func (h *Handler) ListInventories(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "inventories.read") {
+		return
+	}
+
 	pageIndex, _ := strconv.Atoi(r.URL.Query().Get("page_index"))
 	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
 	if pageIndex <= 1 {
@@ -94,6 +106,10 @@ func (h *Handler) ListInventories(w http.ResponseWriter, r *http.Request) {
 
 // UpdateInventory handles PUT /api/inventories/{id}
 func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "inventories.edit") {
+		return
+	}
+
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid inventory id")
@@ -134,6 +150,10 @@ func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
 
 // DeleteInventory handles DELETE /api/inventories/{id}
 func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "inventories.delete") {
+		return
+	}
+
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "invalid inventory id")
@@ -153,6 +173,10 @@ func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DashboardInventory(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, "dashboard.read") {
+		return
+	}
+
 	dashData, err := h.InventorySvc.GetDashboardData()
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "error retrieving dashboard data")
