@@ -23,6 +23,8 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -43,11 +45,60 @@ services:
     volumes:
       - mindata:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # The minio image ships `mc` but not `curl`, so use the bundled client.
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 3s
       retries: 5
 
+  app:
+    build:
+      context: . # Uses ./Dockerfile (compiled binary, no hot-reload)
+    container_name: inventory-api
+    restart: unless-stopped
+    ports:
+      - "9080:9080"
+    environment:
+      PORT: "9080"
+      # Service names resolve via the compose network; "localhost" would point
+      # at the app container itself.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: inventory
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: inventory-images
+      # The browser cannot resolve the internal "minio" hostname, so the
+      # publicly visible base URL is set explicitly (host-published port).
+      S3_PUBLIC_BASE_URL: http://localhost:9000/inventory-images
+      UPLOAD_DIR: /app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../go_inventory_temp_FE # Vite bundle served by nginx
+    container_name: inventory-web
+    restart: unless-stopped
+    ports:
+      # Host 3001 because the Vite dev server already owns 3000.
+      - "3001:80"
+    depends_on:
+      - app
+
 volumes:
   pgdata:
+  redisdata:
   mindata:
