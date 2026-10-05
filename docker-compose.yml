@@ -52,8 +52,10 @@ services:
       retries: 5
 
   app:
-    build:
-      context: . # Uses ./Dockerfile (compiled binary, no hot-reload)
+    # Pulled backend image. There is no source/Dockerfile to build from on the
+    # EC2 host, so set APP_IMAGE (or edit this line) to the image you pulled,
+    # e.g. myrepo/inventory-api:latest.
+    image: ${APP_IMAGE:-inventory-api:latest}
     container_name: inventory-api
     restart: unless-stopped
     ports:
@@ -77,7 +79,9 @@ services:
       S3_BUCKET: inventory-images
       # The browser cannot resolve the internal "minio" hostname, so the
       # publicly visible base URL is set explicitly (host-published port).
-      S3_PUBLIC_BASE_URL: http://localhost:9000/inventory-images
+      # On EC2 set PUBLIC_HOST to the instance's public IP/DNS so the browser
+      # (not this container) can load the images. Defaults to localhost for dev.
+      S3_PUBLIC_BASE_URL: http://${PUBLIC_HOST:-localhost}:9000/inventory-images
       UPLOAD_DIR: /app/uploads
     depends_on:
       postgres:
@@ -88,13 +92,14 @@ services:
         condition: service_healthy
 
   web:
-    build:
-      context: ../go_inventory_temp_FE # Vite bundle served by nginx
+    # Pulled frontend image. No build context on the EC2 host, so set WEB_IMAGE
+    # (or edit this line) to the image you pulled.
+    image: ${WEB_IMAGE:-inventory-web:latest}
     container_name: inventory-web
     restart: unless-stopped
     ports:
-      # Host 3001 because the Vite dev server already owns 3000.
-      - "3001:80"
+      # Defaults to 3001 for local dev (Vite owns 3000); set WEB_PORT=80 on EC2.
+      - "${WEB_PORT:-3001}:80"
     depends_on:
       - app
 
