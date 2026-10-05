@@ -31,26 +31,6 @@ services:
       timeout: 3s
       retries: 5
 
-  minio:
-    image: quay.io/minio/minio:latest
-    container_name: inventory-minio
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
-    volumes:
-      - mindata:/data
-    healthcheck:
-      # The minio image ships `mc` but not `curl`, so use the bundled client.
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   app:
     # Pulled backend image. There is no source/Dockerfile to build from on the
     # EC2 host, so set APP_IMAGE (or edit this line) to the image you pulled,
@@ -72,23 +52,27 @@ services:
       DB_SSLMODE: disable
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: inventory-images
-      # The browser cannot resolve the internal "minio" hostname, so the
-      # publicly visible base URL is set explicitly (host-published port).
-      # On EC2 set PUBLIC_HOST to the instance's public IP/DNS so the browser
-      # (not this container) can load the images. Defaults to localhost for dev.
-      S3_PUBLIC_BASE_URL: http://${PUBLIC_HOST:-localhost}:9000/inventory-images
+      # --- AWS S3 (replaces MinIO) ---
+      # The bucket must already exist in AWS and allow public reads.
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      # Do NOT set S3_ENDPOINT. Leaving it empty makes the app use real AWS S3
+      # (virtual-host style) instead of MinIO (path-style).
+      #
+      # Credentials: on EC2 the preferred approach is to attach an IAM role to
+      # the instance and leave both values unset. Otherwise set an access key.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      #
+      # Optional: public base URL for images. Leave unset to let the app derive
+      # https://<bucket>.s3.<region>.amazonaws.com. Set it when fronting S3 with
+      # CloudFront or a custom domain.
+      # S3_PUBLIC_BASE_URL: https://cdn.example.com
       UPLOAD_DIR: /app/uploads
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
 
   web:
@@ -106,4 +90,3 @@ services:
 volumes:
   pgdata:
   redisdata:
-  mindata:
