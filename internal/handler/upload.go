@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -71,6 +72,7 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		key := h.Storage.NewKey(ext)
 
 		if err := h.Storage.Upload(context.Background(), key, file, contentType, header.Size); err != nil {
+			log.Printf("uploads: store image failed (key=%q, size=%d): %v", key, header.Size, err)
 			respondError(w, http.StatusInternalServerError, "failed to store image")
 			return
 		}
