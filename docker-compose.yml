@@ -68,11 +68,6 @@ services:
       # https://<bucket>.s3.<region>.amazonaws.com. Set it when fronting S3 with
       # CloudFront or a custom domain.
       # S3_PUBLIC_BASE_URL: https://cdn.example.com
-      #
-      # Presigned URLs: with the bucket kept private, the API hands the browser a
-      # short-lived signed link for each image (default 1h). Set to 0 to disable
-      # presigning and serve plain public URLs instead (needs a public bucket).
-      S3_PRESIGN_EXPIRY: ${S3_PRESIGN_EXPIRY:-1h}
       UPLOAD_DIR: /app/uploads
     depends_on:
       postgres:

@@ -46,10 +46,6 @@ type StorageConfig struct {
 	// CreateBucket creates the bucket (and a public read policy) on startup when
 	// it is missing. Intended for local development only.
 	CreateBucket bool
-	// PresignExpiry is how long generated image URLs stay valid. Object keys are
-	// turned into presigned GET URLs on read so the bucket can stay private.
-	// Set to 0 to disable presigning and fall back to plain public URLs.
-	PresignExpiry time.Duration
 }
 
 // AuthConfig holds the lifetimes used by the Redis-backed token store.
@@ -130,8 +126,7 @@ func loadStorageConfig() StorageConfig {
 		// Only manage the bucket automatically against a custom endpoint (MinIO),
 		// never against real AWS where the bucket and its policy are managed
 		// outside the application.
-		CreateBucket:  getEnvBool("S3_CREATE_BUCKET", endpoint != ""),
-		PresignExpiry: getEnvDurationAllowZero("S3_PRESIGN_EXPIRY", time.Hour),
+		CreateBucket: getEnvBool("S3_CREATE_BUCKET", endpoint != ""),
 	}
 }
 
@@ -156,21 +151,6 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(val)
 	if err != nil || d <= 0 {
-		log.Printf("config: invalid %s=%q, falling back to %s", key, val, fallback)
-		return fallback
-	}
-	return d
-}
-
-// getEnvDurationAllowZero is like getEnvDuration but accepts 0, which is used to
-// disable a feature. Negative or unparseable values still fall back.
-func getEnvDurationAllowZero(key string, fallback time.Duration) time.Duration {
-	val := os.Getenv(key)
-	if val == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(val)
-	if err != nil || d < 0 {
 		log.Printf("config: invalid %s=%q, falling back to %s", key, val, fallback)
 		return fallback
 	}
