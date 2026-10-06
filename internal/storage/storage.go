@@ -7,6 +7,10 @@
 // Anything that is already an absolute URL or a site-relative path is stored and
 // returned unchanged, which keeps external image links and files uploaded before
 // the bucket existed working.
+//
+// URLs handed back to clients are short-lived presigned GET URLs, so the bucket
+// itself can stay private. Set PresignExpiry to 0 to disable this and serve plain
+// public URLs instead.
 package storage
 
 import (
@@ -17,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -33,10 +38,13 @@ import (
 // A nil or disabled *Store is valid: every method either reports no-op state or
 // returns the reference unchanged, which is what the local-disk fallback relies on.
 type Store struct {
-	client    *s3.Client
-	bucket    string
-	baseURL   string
-	keyPrefix string
+	client        *s3.Client
+	presigner     *s3.PresignClient
+	bucket        string
+	baseURL       string
+	s3BaseURL     string
+	keyPrefix     string
+	presignExpiry time.Duration
 }
 
 // New builds a Store from configuration. When no bucket is configured it returns
@@ -73,10 +81,13 @@ func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 	})
 
 	s := &Store{
-		client:    client,
-		bucket:    cfg.Bucket,
-		baseURL:   strings.TrimRight(publicBaseURL(cfg), "/"),
-		keyPrefix: strings.Trim(cfg.KeyPrefix, "/"),
+		client:        client,
+		presigner:     s3.NewPresignClient(client),
+		bucket:        cfg.Bucket,
+		baseURL:       strings.TrimRight(publicBaseURL(cfg), "/"),
+		s3BaseURL:     strings.TrimRight(canonicalBaseURL(cfg), "/"),
+		keyPrefix:     strings.Trim(cfg.KeyPrefix, "/"),
+		presignExpiry: cfg.PresignExpiry,
 	}
 
 	if cfg.CreateBucket {
@@ -89,12 +100,21 @@ func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 	return s, nil
 }
 
-// publicBaseURL works out where images are served from.
+// publicBaseURL works out where images are served from when presigning is
+// disabled: an explicit override if given, otherwise the bucket endpoint.
 func publicBaseURL(cfg config.StorageConfig) string {
 	if cfg.PublicBaseURL != "" {
 		return cfg.PublicBaseURL
 	}
+	return canonicalBaseURL(cfg)
+}
+
+// canonicalBaseURL is the bucket's own endpoint, independent of any CDN or
+// custom public base. It is used to recognise our own URLs — including presigned
+// ones — so they can be canonicalised back to object keys when saved.
+func canonicalBaseURL(cfg config.StorageConfig) string {
 	if cfg.Endpoint != "" {
+		// MinIO uses path-style URLs, e.g. http://localhost:9000/my-bucket
 		return fmt.Sprintf("%s/%s", strings.TrimRight(cfg.Endpoint, "/"), cfg.Bucket)
 	}
 	// Standard AWS virtual-host URL, e.g. https://my-bucket.s3.eu-central-1.amazonaws.com
@@ -214,7 +234,9 @@ func (s *Store) Ref(raw string) string {
 	return ref
 }
 
-// URL turns a stored reference into something the browser can load.
+// URL turns a stored reference into something the browser can load. Object keys
+// become short-lived presigned URLs so the bucket can stay private; external
+// URLs and legacy site-relative paths are returned unchanged.
 func (s *Store) URL(ref string) string {
 	if ref == "" || s == nil {
 		return ref
@@ -223,10 +245,36 @@ func (s *Store) URL(ref string) string {
 	if isAbsoluteURL(ref) || strings.HasPrefix(ref, "/") {
 		return ref
 	}
+	// Private bucket: hand out a temporary signed URL instead of a public one.
+	if signed, ok := s.presign(ref); ok {
+		return signed
+	}
 	if s.baseURL == "" {
 		return ref
 	}
 	return s.baseURL + "/" + strings.TrimLeft(ref, "/")
+}
+
+// presign returns a temporary, signed GET URL for an object key. It reports
+// false when presigning is disabled (no bucket, zero expiry) or when signing
+// fails, letting callers fall back to the plain public URL.
+func (s *Store) presign(key string) (string, bool) {
+	if s == nil || s.presigner == nil || s.presignExpiry <= 0 || key == "" {
+		return "", false
+	}
+
+	out, err := s.presigner.PresignGetObject(context.Background(),
+		&s3.GetObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		},
+		s3.WithPresignExpires(s.presignExpiry),
+	)
+	if err != nil {
+		log.Printf("storage: presign %q failed: %v", key, err)
+		return "", false
+	}
+	return out.URL, true
 }
 
 // KeyFromRef returns the object key for a stored reference, if it is one.
@@ -237,22 +285,34 @@ func (s *Store) KeyFromRef(ref string) (string, bool) {
 	return ref, true
 }
 
-// keyFromURL extracts the object key when the URL points at our own bucket.
+// keyFromURL extracts the object key when the URL points at our own bucket,
+// whether it is a plain public URL or a presigned one (whose credentials live in
+// the query string, which is ignored here).
 func (s *Store) keyFromURL(raw string) (string, bool) {
-	if s == nil || s.baseURL == "" || !isAbsoluteURL(raw) {
+	if s == nil || !isAbsoluteURL(raw) {
 		return "", false
 	}
 
-	prefix := s.baseURL + "/"
-	if !strings.HasPrefix(raw, prefix) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
 		return "", false
 	}
+	// Drop credentials/expiry so a presigned URL canonicalises like a plain one.
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	clean := parsed.String()
 
-	key := strings.TrimPrefix(raw, prefix)
-	if key == "" {
-		return "", false
+	// Match the bucket endpoint (presigned URLs) and any custom public base / CDN
+	// (unsigned URLs), whichever the reference came from.
+	for _, base := range []string{s.s3BaseURL, s.baseURL} {
+		if base == "" {
+			continue
+		}
+		if key := strings.TrimPrefix(clean, base+"/"); key != clean && key != "" {
+			return key, true
+		}
 	}
-	return key, true
+	return "", false
 }
 
 func isAbsoluteURL(s string) bool {
