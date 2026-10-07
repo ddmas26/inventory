@@ -63,6 +63,10 @@ services:
       # the instance and leave both values unset. Otherwise set an access key.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Required only for TEMPORARY credentials (STS, SSO, IAM Identity Center,
+      # AWS Academy/Learner Lab). Omitting it for those makes S3 answer 403
+      # SignatureDoesNotMatch. Not needed for long-lived IAM user keys.
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       #
       # Optional: public base URL for images. Leave unset to let the app derive
       # https://<bucket>.s3.<region>.amazonaws.com. Set it when fronting S3 with

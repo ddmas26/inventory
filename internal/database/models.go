@@ -48,8 +48,10 @@ func (c *Company) BeforeCreate(tx *gorm.DB) error {
 
 // Product represents a product that can be stocked in inventories.
 type Product struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	CompanyID   uuid.UUID `gorm:"type:uuid;index" json:"company_id"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	// CompanyID and Name share the index name on purpose: GORM builds a composite
+	// unique index from every field carrying the same uniqueIndex:<name> tag.
+	CompanyID   uuid.UUID `gorm:"type:uuid;uniqueIndex:idx_products_company_name" json:"company_id"`
 	Name        string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_products_company_name" json:"name"`
 	Description string    `gorm:"type:text" json:"description"`
 	Price       float64   `gorm:"not null;default:0" json:"price"`
@@ -123,7 +125,7 @@ func (pi *ProductImage) BeforeCreate(tx *gorm.DB) error {
 // Inventory represents a physical storage location (warehouse, store, etc.).
 type Inventory struct {
 	ID        uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	CompanyID uuid.UUID      `gorm:"type:uuid;index" json:"company_id"`
+	CompanyID uuid.UUID      `gorm:"type:uuid;uniqueIndex:idx_inventories_company_name" json:"company_id"`
 	Name      string         `gorm:"type:varchar(255);not null;uniqueIndex:idx_inventories_company_name" json:"name"`
 	Address   string         `gorm:"type:text" json:"address"`
 	Latitude  string         `gorm:"type:varchar(50)" json:"latitude"`
@@ -201,7 +203,7 @@ func (s *User) BeforeCreate(tx *gorm.DB) error {
 // permission catalog they reference is global.
 type Role struct {
 	ID          uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	CompanyID   uuid.UUID      `json:"company_id" gorm:"type:uuid;index"`
+	CompanyID   uuid.UUID      `json:"company_id" gorm:"type:uuid;uniqueIndex:idx_roles_company_name"`
 	Name        string         `json:"name" gorm:"size:100;not null;uniqueIndex:idx_roles_company_name"`
 	Description string         `json:"description" gorm:"type:text"`
 	Permissions []Permission   `json:"permissions,omitempty" gorm:"many2many:role_permissions;"`

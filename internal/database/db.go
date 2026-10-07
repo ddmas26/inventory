@@ -40,13 +40,22 @@ func EnableSQLLogging(db *gorm.DB) {
 	log.Println("SQL query logging enabled")
 }
 
-// legacyIndexes are the single-column unique indexes that the multi-tenant
-// change replaces with per-company composite indexes. AutoMigrate never drops
-// indexes, so they are removed explicitly before it runs.
+// legacyIndexes are indexes that must be dropped before AutoMigrate runs.
+// AutoMigrate never drops or alters existing indexes, and "IF NOT EXISTS"
+// silently keeps a wrong one in place, so they are removed explicitly.
+//
+//   - idx_products_name / idx_inventories_name / idx_roles_name were the old
+//     single-column global unique indexes, replaced by per-company ones.
+//   - idx_*_company_name were briefly created as unique on ("name") alone (a
+//     model-tag bug). Dropping them lets AutoMigrate rebuild them correctly as
+//     the composite (company_id, name) index.
 var legacyIndexes = []string{
 	"idx_products_name",
 	"idx_inventories_name",
 	"idx_roles_name",
+	"idx_products_company_name",
+	"idx_inventories_company_name",
+	"idx_roles_company_name",
 }
 
 // Migrate runs auto-migration for all models.

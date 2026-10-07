@@ -47,15 +47,28 @@ func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 		return &Store{}, nil
 	}
 
+	// Credentials must be supplied as a pair; a lone key silently falls through to
+	// the default chain and produces confusing signature errors.
+	if (cfg.AccessKey == "") != (cfg.SecretKey == "") {
+		return nil, errors.New("storage: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together")
+	}
+
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		// The SDK errors out when it cannot resolve a region, even against MinIO,
 		// so the configured region is always applied.
 		awsconfig.WithRegion(cfg.Region),
 	}
 	if cfg.AccessKey != "" && cfg.SecretKey != "" {
+		// The session token is required for temporary credentials (STS, SSO, IAM
+		// Identity Center, AWS Academy). Passing an empty token here is exactly
+		// what makes S3 answer 403 SignatureDoesNotMatch for those credentials.
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, ""),
+			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken),
 		))
+		log.Printf("storage: using static credentials from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (session token: %s)",
+			presence(cfg.SessionToken))
+	} else {
+		log.Println("storage: using the AWS SDK default credential chain (env / shared config / IAM role)")
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
@@ -85,8 +98,39 @@ func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 		}
 	}
 
-	log.Printf("storage: bucket %q ready (base URL %s)", s.bucket, s.baseURL)
+	ep := cfg.Endpoint
+	if ep == "" {
+		ep = "AWS S3 (default endpoints)"
+	}
+	log.Printf("storage: bucket %q region %q endpoint %s ready (base URL %s)", s.bucket, cfg.Region, ep, s.baseURL)
 	return s, nil
+}
+
+// presence reports whether a secret value is set without logging the value.
+func presence(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "absent"
+	}
+	return "present"
+}
+
+// signatureHint appends actionable guidance when S3 rejects a request because of
+// the signature, which is nearly always a credentials or region problem.
+func signatureHint(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "SignatureDoesNotMatch"):
+		return "\n  hint: verify AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are correct and have no stray spaces/newlines," +
+			"\n        that AWS_SESSION_TOKEN is set when using temporary credentials (STS/SSO/AWS Academy)," +
+			"\n        and that AWS_REGION matches the bucket's region."
+	case strings.Contains(msg, "InvalidAccessKeyId"):
+		return "\n  hint: the access key ID is unknown (rotated or expired?)."
+	case strings.Contains(msg, "TokenRefreshRequired"), strings.Contains(msg, "ExpiredToken"):
+		return "\n  hint: the session token has expired — refresh the temporary credentials."
+	case strings.Contains(msg, "RequestTimeTooSkewed"):
+		return "\n  hint: the container clock is out of sync with AWS; check NTP/time."
+	}
+	return ""
 }
 
 // publicBaseURL works out where images are served from.
@@ -179,7 +223,7 @@ func (s *Store) Upload(ctx context.Context, key string, body io.Reader, contentT
 	}
 
 	if _, err := s.client.PutObject(ctx, input); err != nil {
-		return fmt.Errorf("upload %q: %w", key, err)
+		return fmt.Errorf("upload %q: %w%s", key, err, signatureHint(err))
 	}
 	return nil
 }

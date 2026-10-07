@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,6 +42,10 @@ type StorageConfig struct {
 	// is not used.
 	AccessKey string
 	SecretKey string
+	// SessionToken accompanies temporary credentials (AWS STS, SSO, IAM Identity
+	// Center, AWS Academy). Omitting it for temporary credentials makes S3 reject
+	// every request with SignatureDoesNotMatch.
+	SessionToken string
 	// KeyPrefix namespaces uploaded objects inside the bucket.
 	KeyPrefix string
 	// CreateBucket creates the bucket (and a public read policy) on startup when
@@ -116,13 +121,16 @@ func loadStorageConfig() StorageConfig {
 	endpoint := getEnv("S3_ENDPOINT", "")
 
 	return StorageConfig{
-		Bucket:        getEnv("S3_BUCKET", ""),
-		Region:        getEnv("AWS_REGION", "us-east-1"),
-		Endpoint:      endpoint,
-		PublicBaseURL: getEnv("S3_PUBLIC_BASE_URL", ""),
-		AccessKey:     getEnv("AWS_ACCESS_KEY_ID", ""),
-		SecretKey:     getEnv("AWS_SECRET_ACCESS_KEY", ""),
-		KeyPrefix:     getEnv("S3_KEY_PREFIX", "products"),
+		Bucket:        strings.TrimSpace(getEnv("S3_BUCKET", "")),
+		Region:        strings.TrimSpace(getEnv("AWS_REGION", "us-east-1")),
+		Endpoint:      strings.TrimSpace(endpoint),
+		PublicBaseURL: strings.TrimSpace(getEnv("S3_PUBLIC_BASE_URL", "")),
+		// Trailing spaces/newlines copied along with credentials are a very common
+		// cause of SignatureDoesNotMatch, so every credential is trimmed here.
+		AccessKey:    strings.TrimSpace(getEnv("AWS_ACCESS_KEY_ID", "")),
+		SecretKey:    strings.TrimSpace(getEnv("AWS_SECRET_ACCESS_KEY", "")),
+		SessionToken: strings.TrimSpace(getEnv("AWS_SESSION_TOKEN", "")),
+		KeyPrefix:    getEnv("S3_KEY_PREFIX", "products"),
 		// Only manage the bucket automatically against a custom endpoint (MinIO),
 		// never against real AWS where the bucket and its policy are managed
 		// outside the application.

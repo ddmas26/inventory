@@ -270,12 +270,29 @@ func seedPlatformAdmin(repo *Repository) error {
 
 // backfillCompanyID assigns any pre-existing, unscoped rows to the given company
 // so data created before the multi-tenant change keeps working.
+//
+// products, inventories and roles carry a unique (company_id, name) index, so an
+// orphan row is only adopted when the target company does not already use that
+// name — otherwise the UPDATE would violate the index. Orphan names were globally
+// unique before multi-tenancy, so they never collide with each other.
 func backfillCompanyID(db *gorm.DB, companyID uuid.UUID) error {
-	tables := []string{"products", "inventories", "stock", "users", "roles"}
-	for _, table := range tables {
+	nameScoped := []string{"products", "inventories", "roles"}
+	for _, table := range nameScoped {
+		query := "UPDATE " + table + " SET company_id = ?" +
+			" WHERE company_id IS NULL" +
+			" AND NOT EXISTS (SELECT 1 FROM " + table + " existing" +
+			" WHERE existing.company_id = ? AND existing.name = " + table + ".name)"
+		if err := db.Exec(query, companyID, companyID).Error; err != nil {
+			return fmt.Errorf("seed: backfill %s.company_id: %w", table, err)
+		}
+	}
+
+	// Tables without a name-scoped unique constraint can be assigned freely.
+	for _, table := range []string{"stock", "users"} {
 		if err := db.Exec("UPDATE "+table+" SET company_id = ? WHERE company_id IS NULL", companyID).Error; err != nil {
 			return fmt.Errorf("seed: backfill %s.company_id: %w", table, err)
 		}
 	}
+
 	return nil
 }
