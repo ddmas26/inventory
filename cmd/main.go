@@ -61,8 +61,9 @@ func main() {
 	inventorySvc := service.NewInventoryService(repo, store)
 	userSvc := service.NewUserService(repo)
 	authSvc := auth.NewAuthService(repo, session)
+	platformAuthSvc := auth.NewPlatformAuthService(repo, session)
 	roleSvc := service.NewRoleService(repo)
-	h := handler.NewHandler(repo, stockSvc, productSvc, inventorySvc, userSvc, authSvc, roleSvc, session, store, cfg.UploadDir)
+	h := handler.NewHandler(repo, stockSvc, productSvc, inventorySvc, userSvc, authSvc, platformAuthSvc, roleSvc, session, store, cfg.UploadDir)
 
 	// Set up routes
 	mux := http.NewServeMux()
@@ -110,6 +111,19 @@ func main() {
 	mux.HandleFunc("POST /api/auth/refresh", h.Refresh)
 	mux.HandleFunc("POST /api/auth/logout", h.Logout)
 	mux.HandleFunc("GET /api/auth/me", h.Me)
+
+	// ── Platform (operator) auth ──────────────────────────────
+	mux.HandleFunc("POST /api/platform/auth/login", h.PlatformLogin)
+	mux.HandleFunc("POST /api/platform/auth/logout", h.PlatformLogout)
+	mux.HandleFunc("GET /api/platform/auth/me", h.PlatformMe)
+
+	// ── Platform (company administration) ─────────────────────
+	mux.HandleFunc("GET /api/platform/dashboard", h.PlatformDashboard)
+	mux.HandleFunc("GET /api/platform/companies", h.ListCompanies)
+	mux.HandleFunc("GET /api/platform/companies/{id}", h.GetCompany)
+	mux.HandleFunc("PATCH /api/platform/companies/{id}/approve", h.ApproveCompany)
+	mux.HandleFunc("PATCH /api/platform/companies/{id}/reject", h.RejectCompany)
+	mux.HandleFunc("PATCH /api/platform/companies/{id}/suspend", h.SuspendCompany)
 
 	// ── Roles ────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/roles", h.CreateRole)

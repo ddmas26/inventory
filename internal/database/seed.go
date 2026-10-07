@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -77,6 +78,17 @@ func Seed(db *gorm.DB) error {
 	log.Println("Seeding database...")
 
 	repo := NewRepository(db)
+
+	// ── 0. Grandfather companies that predate the approval workflow ──
+	// Legacy rows have no status yet; they are treated as already approved so an
+	// upgrade never locks existing tenants out. New companies always carry a
+	// status, so this only ever affects pre-existing rows.
+	if err := db.Exec(
+		"UPDATE companies SET status = ?, approved_at = COALESCE(approved_at, NOW()) WHERE status IS NULL OR status = ''",
+		CompanyStatusApproved,
+	).Error; err != nil {
+		return fmt.Errorf("seed: grandfather companies: %w", err)
+	}
 
 	// ── 1. Create all permissions if they don't exist (global) ─
 	permMap := make(map[string]*Permission)
@@ -175,6 +187,11 @@ func Seed(db *gorm.DB) error {
 		log.Println("  - Admin user already exists, skipping")
 	}
 
+	// ── 6. Create the platform operator if not exists ────────
+	if err := seedPlatformAdmin(repo); err != nil {
+		return err
+	}
+
 	log.Println("Seeding complete.")
 	return nil
 }
@@ -200,12 +217,55 @@ func ensureDefaultCompany(repo *Repository) (*Company, error) {
 		return nil, err
 	}
 
-	company = Company{Name: defaultCompanyName(), Slug: "default", IsActive: true}
+	now := time.Now()
+	company = Company{Name: defaultCompanyName(), Slug: "default", Status: CompanyStatusApproved, ApprovedAt: &now}
 	if err := repo.CreateCompany(&company); err != nil {
 		return nil, err
 	}
 	log.Printf("  ✓ Created default company: %s", company.Name)
 	return &company, nil
+}
+
+// seedPlatformAdmin creates the platform operator account (the one that reviews
+// companies) from the environment, if it does not exist yet.
+func seedPlatformAdmin(repo *Repository) error {
+	email := os.Getenv("PLATFORM_ADMIN_EMAIL")
+	if email == "" {
+		email = "platform@inventory.com"
+	}
+	password := os.Getenv("PLATFORM_ADMIN_PASSWORD")
+	if password == "" {
+		password = "platform123"
+	}
+	phone := os.Getenv("PLATFORM_ADMIN_PHONE")
+	name := os.Getenv("PLATFORM_ADMIN_NAME")
+	if name == "" {
+		name = "Platform Admin"
+	}
+
+	existing, _ := repo.GetPlatformUserByEmail(email)
+	if existing != nil {
+		log.Println("  - Platform admin already exists, skipping")
+		return nil
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("seed: hash platform password: %w", err)
+	}
+
+	pu := &PlatformUser{
+		Name:     name,
+		Email:    email,
+		Phone:    phone,
+		Password: string(hashed),
+		IsActive: true,
+	}
+	if err := repo.CreatePlatformUser(pu); err != nil {
+		return fmt.Errorf("seed: create platform admin: %w", err)
+	}
+	log.Printf("  ✓ Created platform admin: %s / %s", email, password)
+	return nil
 }
 
 // backfillCompanyID assigns any pre-existing, unscoped rows to the given company

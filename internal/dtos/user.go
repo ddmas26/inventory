@@ -12,6 +12,8 @@ type UserResponse struct {
 	CompanyID uuid.UUID  `json:"company_id"`
 	Name      string     `json:"name"`
 	Email     string     `json:"email"`
+	Phone     string     `json:"phone"`
+	IsRoot    bool       `json:"is_root"`
 	IsActive  bool       `json:"is_active"`
 	RoleID    *uuid.UUID `json:"role_id"`
 	CreatedAt time.Time  `json:"created_at"`
@@ -24,6 +26,8 @@ type UserDto struct {
 	CompanyID uuid.UUID  `json:"company_id"`
 	Name      string     `json:"name"`
 	Email     string     `json:"email"`
+	Phone     string     `json:"phone"`
+	IsRoot    bool       `json:"is_root"`
 	IsActive  bool       `json:"is_active"`
 	RoleID    *uuid.UUID `json:"role_id"`
 	CreatedAt time.Time  `json:"created_at"`
@@ -34,6 +38,7 @@ type UserDto struct {
 type CreateUserRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
+	Phone    string `json:"phone"`
 	Password string `json:"password"`
 }
 
@@ -41,5 +46,6 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
+	Phone    string `json:"phone"`
 	Password string `json:"password,omitempty"`
 }

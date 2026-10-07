@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/ddmas26/inventory/internal/dtos"
+	"github.com/google/uuid"
 )
 
 // Register handles POST /api/auth/register
@@ -48,14 +49,25 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read the company's status fresh so the client's "awaiting approval" screen
+	// clears as soon as a platform admin approves the company (no re-login needed).
+	companyStatus := claims.CompanyStatus
+	if cid, err := uuid.Parse(claims.CompanyID); err == nil {
+		if company, err := h.Repo.GetCompanyByID(cid); err == nil {
+			companyStatus = string(company.Status)
+		}
+	}
+
 	respond(w, http.StatusOK, dtos.ClaimsResponse{
-		UserID:      claims.UserID,
-		CompanyID:   claims.CompanyID,
-		CompanyName: claims.CompanyName,
-		Name:        claims.Name,
-		Email:       claims.Email,
-		Role:        claims.Role,
-		Permissions: claims.Permissions,
+		UserID:        claims.UserID,
+		CompanyID:     claims.CompanyID,
+		CompanyName:   claims.CompanyName,
+		CompanyStatus: companyStatus,
+		IsRoot:        claims.IsRoot,
+		Name:          claims.Name,
+		Email:         claims.Email,
+		Role:          claims.Role,
+		Permissions:   claims.Permissions,
 	})
 }
 

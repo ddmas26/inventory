@@ -13,6 +13,7 @@ import (
 type createUserRequest struct {
 	Name     string  `json:"name"`
 	Email    string  `json:"email"`
+	Phone    string  `json:"phone"`
 	Password string  `json:"password"`
 	RoleID   *string `json:"role_id"`
 }
@@ -20,6 +21,7 @@ type createUserRequest struct {
 type updateUserRequest struct {
 	Name     string  `json:"name"`
 	Email    string  `json:"email"`
+	Phone    string  `json:"phone"`
 	Password string  `json:"password,omitempty"`
 	RoleID   *string `json:"role_id"`
 }
@@ -52,7 +54,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		roleID = &parsed
 	}
 
-	created, err := h.UserSvc.CreateUser(cid, req.Name, req.Email, req.Password, roleID)
+	created, err := h.UserSvc.CreateUser(cid, req.Name, req.Email, req.Phone, req.Password, roleID)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -189,6 +191,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		ID:       id,
 		Name:     req.Name,
 		Email:    req.Email,
+		Phone:    req.Phone,
 		Password: password,
 		RoleID:   roleID,
 	}

@@ -18,12 +18,15 @@ func NewUserService(repo *database.Repository) *UserService {
 	return &UserService{repo: repo}
 }
 
-func (s *UserService) CreateUser(companyID uuid.UUID, name, email, password string, roleID *uuid.UUID) (*dtos.UserResponse, error) {
+func (s *UserService) CreateUser(companyID uuid.UUID, name, email, phone, password string, roleID *uuid.UUID) (*dtos.UserResponse, error) {
 	if name == "" {
 		return nil, errors.New("user name is required")
 	}
 	if email == "" {
 		return nil, errors.New("email is required")
+	}
+	if phone == "" {
+		return nil, errors.New("phone is required")
 	}
 	if password == "" || len(password) < 8 {
 		return nil, errors.New("password must be at least 8 characters")
@@ -52,6 +55,7 @@ func (s *UserService) CreateUser(companyID uuid.UUID, name, email, password stri
 		CompanyID: companyID,
 		Name:      name,
 		Email:     email,
+		Phone:     phone,
 		Password:  string(hashed),
 		RoleID:    roleID,
 		IsActive:  true,
@@ -66,6 +70,8 @@ func (s *UserService) CreateUser(companyID uuid.UUID, name, email, password stri
 		CompanyID: user.CompanyID,
 		Name:      user.Name,
 		Email:     user.Email,
+		Phone:     user.Phone,
+		IsRoot:    user.IsRoot,
 		IsActive:  user.IsActive,
 		RoleID:    user.RoleID,
 		CreatedAt: user.CreatedAt,
@@ -94,6 +100,9 @@ func (s *UserService) Update(companyID uuid.UUID, user *database.User) error {
 	}
 	if user.Email == "" {
 		return errors.New("email is required")
+	}
+	if user.Phone == "" {
+		return errors.New("phone is required")
 	}
 	if user.RoleID != nil {
 		if _, err := s.repo.GetRoleByID(companyID, *user.RoleID); err != nil {

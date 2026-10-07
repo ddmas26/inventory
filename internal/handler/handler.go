@@ -21,13 +21,14 @@ type Handler struct {
 	InventorySvc *service.InventoryService
 	UserSvc      *service.UserService
 	AuthSvc      *auth.AuthService
+	PlatformAuth *auth.PlatformAuthService
 	RoleSvc      *service.RoleService
 	Session      *auth.SessionStore
 	Storage      *storage.Store
 	UploadDir    string
 }
 
-func NewHandler(repo *database.Repository, stockSvc *service.StockService, productSvc *service.ProductService, inventorySvc *service.InventoryService, userSvc *service.UserService, authSvc *auth.AuthService, roleSvc *service.RoleService, session *auth.SessionStore, store *storage.Store, uploadDir string) *Handler {
+func NewHandler(repo *database.Repository, stockSvc *service.StockService, productSvc *service.ProductService, inventorySvc *service.InventoryService, userSvc *service.UserService, authSvc *auth.AuthService, platformAuth *auth.PlatformAuthService, roleSvc *service.RoleService, session *auth.SessionStore, store *storage.Store, uploadDir string) *Handler {
 	return &Handler{
 		Repo:         repo,
 		StockSvc:     stockSvc,
@@ -35,6 +36,7 @@ func NewHandler(repo *database.Repository, stockSvc *service.StockService, produ
 		InventorySvc: inventorySvc,
 		UserSvc:      userSvc,
 		AuthSvc:      authSvc,
+		PlatformAuth: platformAuth,
 		RoleSvc:      roleSvc,
 		Session:      session,
 		Storage:      store,
@@ -109,6 +111,11 @@ func (h *Handler) requirePermission(w http.ResponseWriter, r *http.Request, perm
 		return false
 	}
 
+	if !companyApproved(claims) {
+		respondError(w, http.StatusForbidden, "company is not approved")
+		return false
+	}
+
 	for _, p := range claims.Permissions {
 		if p == permissionCode {
 			return true
@@ -119,13 +126,18 @@ func (h *Handler) requirePermission(w http.ResponseWriter, r *http.Request, perm
 	return false
 }
 
-// authorize verifies the session and that the caller holds the given permission.
-// On success it returns the session claims, which carry the caller's company ID
-// so every tenant-scoped query can be filtered by it.
+// authorize verifies the session, the company's approval status, and that the
+// caller holds the given permission. On success it returns the session claims,
+// which carry the caller's company ID so every tenant-scoped query is filtered.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, permissionCode string) (*auth.SessionClaims, bool) {
 	claims, err := h.sessionFromRequest(r)
 	if err != nil {
 		respondError(w, http.StatusUnauthorized, err.Error())
+		return nil, false
+	}
+
+	if !companyApproved(claims) {
+		respondError(w, http.StatusForbidden, "company is not approved")
 		return nil, false
 	}
 
@@ -137,6 +149,32 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, permissionCo
 
 	respondError(w, http.StatusForbidden, "insufficient permissions")
 	return nil, false
+}
+
+// companyApproved reports whether the caller's company may use the application.
+// Companies awaiting approval (or rejected/suspended) are blocked from all data
+// endpoints.
+func companyApproved(claims *auth.SessionClaims) bool {
+	return claims.CompanyStatus == string(database.CompanyStatusApproved)
+}
+
+// platformSessionFromRequest extracts and validates a platform operator session.
+func (h *Handler) platformSessionFromRequest(r *http.Request) (*auth.PlatformSessionClaims, error) {
+	token := bearerToken(r)
+	if token == "" {
+		return nil, errUnauthorized("missing or invalid authorization header")
+	}
+
+	claims, err := h.Session.GetPlatformSession(context.Background(), token)
+	if err != nil {
+		return nil, errUnauthorized("session lookup failed")
+	}
+	if claims == nil {
+		return nil, errUnauthorized("session expired or not found")
+	}
+
+	_ = h.Session.RefreshPlatformSession(context.Background(), token)
+	return claims, nil
 }
 
 // companyID parses the caller's company UUID from session claims.

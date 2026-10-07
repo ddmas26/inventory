@@ -66,6 +66,7 @@ func Migrate(db *gorm.DB) error {
 		&User{},
 		&Role{},
 		&Permission{},
+		&PlatformUser{},
 	)
 	if err != nil {
 		return fmt.Errorf("auto-migration failed: %w", err)

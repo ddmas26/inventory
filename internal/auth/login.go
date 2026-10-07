@@ -23,17 +23,24 @@ func NewAuthService(repo *database.Repository, session *SessionStore) *AuthServi
 }
 
 // Register onboards a brand new company together with its root (owner) user. The
-// root user is granted the company's "Super Admin" role, which carries every
-// permission.
+// company starts in the "pending" state and becomes usable once a platform admin
+// approves it. The root user is granted the company's "Super Admin" role, which
+// carries every permission.
 func (s *AuthService) Register(req dtos.RegisterRequest) (*dtos.UserResponse, error) {
 	if req.CompanyName == "" {
 		return nil, errors.New("company name is required")
+	}
+	if req.CompanyPhone == "" {
+		return nil, errors.New("company phone is required")
 	}
 	if req.Name == "" {
 		return nil, errors.New("name is required")
 	}
 	if req.Email == "" {
 		return nil, errors.New("email is required")
+	}
+	if req.Phone == "" {
+		return nil, errors.New("phone is required")
 	}
 	if req.Password == "" || len(req.Password) < 8 {
 		return nil, errors.New("password must be at least 8 characters")
@@ -52,15 +59,18 @@ func (s *AuthService) Register(req dtos.RegisterRequest) (*dtos.UserResponse, er
 	}
 
 	company := &database.Company{
-		Name:     req.CompanyName,
-		Slug:     slugify(req.CompanyName),
-		IsActive: true,
+		Name:   req.CompanyName,
+		Slug:   slugify(req.CompanyName),
+		Phone:  req.CompanyPhone,
+		Status: database.CompanyStatusPending,
 	}
 
 	owner := &database.User{
 		Name:     req.Name,
 		Email:    req.Email,
+		Phone:    req.Phone,
 		Password: string(hashed),
+		IsRoot:   true,
 		IsActive: true,
 	}
 
@@ -190,6 +200,19 @@ func (s *AuthService) issueTokens(user *database.User) (*dtos.LoginResponse, err
 	if fullUser.CompanyID != uuid.Nil {
 		if company, err := s.repo.GetCompanyByID(fullUser.CompanyID); err == nil {
 			claims.CompanyName = company.Name
+			claims.CompanyStatus = string(company.Status)
+		}
+	}
+
+	// Root (owner) users can always edit company data, so grant them every
+	// permission regardless of the role they were assigned.
+	if fullUser.IsRoot {
+		if perms, err := s.repo.ListPermissions(); err == nil {
+			codes := make([]string, 0, len(perms))
+			for _, p := range perms {
+				codes = append(codes, p.Code)
+			}
+			claims.Permissions = codes
 		}
 	}
 
@@ -227,6 +250,7 @@ func sessionClaims(u *database.User) *SessionClaims {
 	return &SessionClaims{
 		UserID:      u.ID.String(),
 		CompanyID:   u.CompanyID.String(),
+		IsRoot:      u.IsRoot,
 		Name:        u.Name,
 		Email:       u.Email,
 		Role:        roleName,
@@ -241,6 +265,8 @@ func toUserResponse(u *database.User) dtos.UserResponse {
 		CompanyID: u.CompanyID,
 		Name:      u.Name,
 		Email:     u.Email,
+		Phone:     u.Phone,
+		IsRoot:    u.IsRoot,
 		IsActive:  u.IsActive,
 		RoleID:    u.RoleID,
 		CreatedAt: u.CreatedAt,

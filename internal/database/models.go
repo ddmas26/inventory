@@ -7,17 +7,35 @@ import (
 	"gorm.io/gorm"
 )
 
+// CompanyStatus is the lifecycle state of a company (tenant). New sign-ups start
+// as "pending" and only become usable once a platform admin approves them.
+type CompanyStatus string
+
+const (
+	CompanyStatusPending   CompanyStatus = "pending"
+	CompanyStatusApproved  CompanyStatus = "approved"
+	CompanyStatusRejected  CompanyStatus = "rejected"
+	CompanyStatusSuspended CompanyStatus = "suspended"
+)
+
 // Company is a tenant. Every tenant-owned record (users, roles, inventories,
 // products and stock) belongs to exactly one company, and all access is scoped
 // to the caller's company.
 type Company struct {
-	ID        uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Name      string         `gorm:"type:varchar(255);not null" json:"name"`
-	Slug      string         `gorm:"type:varchar(255);not null;uniqueIndex" json:"slug"`
-	IsActive  bool           `gorm:"not null;default:true" json:"is_active"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	ID         uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Name       string         `gorm:"type:varchar(255);not null" json:"name"`
+	Slug       string         `gorm:"type:varchar(255);not null;uniqueIndex" json:"slug"`
+	Phone      string         `gorm:"type:varchar(32)" json:"phone"`
+	Status     CompanyStatus  `gorm:"type:varchar(20);index" json:"status"`
+	ApprovedAt *time.Time     `json:"approved_at,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+// IsApproved reports whether the company may use the application.
+func (c *Company) IsApproved() bool {
+	return c.Status == CompanyStatusApproved
 }
 
 // BeforeCreate hook ensures UUID is set if empty.
@@ -155,11 +173,15 @@ func (s *Stock) BeforeCreate(tx *gorm.DB) error {
 }
 
 type User struct {
-	ID        uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	CompanyID uuid.UUID      `json:"company_id" gorm:"type:uuid;index"`
-	Name      string         `json:"name" gorm:"size:50;not null" validate:"required,min=2,max=50"`
-	Email     string         `json:"email" gorm:"uniqueIndex;size:255;not null" validate:"required,email"`
-	Password  string         `json:"-" gorm:"size:255;not null" validate:"required,min=8"`
+	ID        uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;index"`
+	Name      string    `json:"name" gorm:"size:50;not null" validate:"required,min=2,max=50"`
+	Email     string    `json:"email" gorm:"uniqueIndex;size:255;not null" validate:"required,email"`
+	Phone     string    `json:"phone" gorm:"size:32"`
+	Password  string    `json:"-" gorm:"size:255;not null" validate:"required,min=8"`
+	// IsRoot marks the company owner (the account created with the company at
+	// sign-up). Root users can edit company data regardless of their role.
+	IsRoot    bool           `json:"is_root" gorm:"not null;default:false"`
 	RoleID    *uuid.UUID     `json:"role_id" gorm:"type:uuid" validate:"omitempty"`
 	Role      *Role          `json:"role,omitempty" gorm:"foreignKey:RoleID;constraint:OnDelete:SET NULL"`
 	IsActive  bool           `json:"is_active" gorm:"default:true"`
@@ -206,6 +228,29 @@ type Permission struct {
 }
 
 func (p *Permission) BeforeCreate(tx *gorm.DB) error {
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
+	return nil
+}
+
+// PlatformUser is an operator of the platform itself — the account that reviews
+// and approves companies. Platform users are deliberately kept in their own
+// table (and their own auth flow) so they can be extracted into a standalone
+// platform service with its own database later. They never belong to a company.
+type PlatformUser struct {
+	ID        uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	Name      string         `json:"name" gorm:"size:50;not null"`
+	Email     string         `json:"email" gorm:"uniqueIndex;size:255;not null"`
+	Phone     string         `json:"phone" gorm:"size:32"`
+	Password  string         `json:"-" gorm:"size:255;not null"`
+	IsActive  bool           `json:"is_active" gorm:"default:true"`
+	CreatedAt time.Time      `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+func (p *PlatformUser) BeforeCreate(tx *gorm.DB) error {
 	if p.ID == uuid.Nil {
 		p.ID = uuid.New()
 	}

@@ -12,13 +12,24 @@ import (
 
 // SessionClaims holds the user data stored in a Redis session.
 type SessionClaims struct {
-	UserID      string   `json:"user_id"`
-	CompanyID   string   `json:"company_id"`
-	CompanyName string   `json:"company_name"`
-	Name        string   `json:"name"`
-	Email       string   `json:"email"`
-	Role        string   `json:"role"`
-	Permissions []string `json:"permissions"`
+	UserID        string   `json:"user_id"`
+	CompanyID     string   `json:"company_id"`
+	CompanyName   string   `json:"company_name"`
+	CompanyStatus string   `json:"company_status"`
+	IsRoot        bool     `json:"is_root"`
+	Name          string   `json:"name"`
+	Email         string   `json:"email"`
+	Role          string   `json:"role"`
+	Permissions   []string `json:"permissions"`
+}
+
+// PlatformSessionClaims holds a platform operator's session. Platform sessions
+// live under their own Redis key namespace so they can be split into a separate
+// platform service (and store) later without touching company sessions.
+type PlatformSessionClaims struct {
+	PlatformUserID string `json:"platform_user_id"`
+	Name           string `json:"name"`
+	Email          string `json:"email"`
 }
 
 // SessionStore manages access sessions and refresh tokens in Redis.
@@ -104,6 +115,57 @@ func (s *SessionStore) RefreshSession(ctx context.Context, token string) error {
 // DeleteSession removes a session from Redis.
 func (s *SessionStore) DeleteSession(ctx context.Context, token string) error {
 	key := fmt.Sprintf("session:%s", token)
+	return s.client.Del(ctx, key).Err()
+}
+
+// CreatePlatformSession stores platform claims under a platform-scoped key and
+// returns the session token.
+func (s *SessionStore) CreatePlatformSession(ctx context.Context, claims *PlatformSessionClaims) (string, error) {
+	token := uuid.New().String()
+	key := fmt.Sprintf("platform_session:%s", token)
+
+	data, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("marshal platform claims: %w", err)
+	}
+
+	if err := s.client.Set(ctx, key, data, s.accessTTL).Err(); err != nil {
+		return "", fmt.Errorf("redis set: %w", err)
+	}
+
+	return token, nil
+}
+
+// GetPlatformSession retrieves platform claims for a session token, or (nil, nil)
+// when the session is unknown or expired.
+func (s *SessionStore) GetPlatformSession(ctx context.Context, token string) (*PlatformSessionClaims, error) {
+	key := fmt.Sprintf("platform_session:%s", token)
+
+	data, err := s.client.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis get: %w", err)
+	}
+
+	var claims PlatformSessionClaims
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return nil, fmt.Errorf("unmarshal platform claims: %w", err)
+	}
+
+	return &claims, nil
+}
+
+// RefreshPlatformSession resets the TTL on an existing platform session.
+func (s *SessionStore) RefreshPlatformSession(ctx context.Context, token string) error {
+	key := fmt.Sprintf("platform_session:%s", token)
+	return s.client.Expire(ctx, key, s.accessTTL).Err()
+}
+
+// DeletePlatformSession removes a platform session from Redis.
+func (s *SessionStore) DeletePlatformSession(ctx context.Context, token string) error {
+	key := fmt.Sprintf("platform_session:%s", token)
 	return s.client.Del(ctx, key).Err()
 }
 

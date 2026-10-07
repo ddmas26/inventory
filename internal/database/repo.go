@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sort"
+	"time"
 
 	"github.com/ddmas26/inventory/internal/dtos"
 	"github.com/google/uuid"
@@ -717,7 +718,7 @@ func (r *Repository) ListUsers(companyID uuid.UUID, offset, limit int, search st
 	err := query.Order("created_at DESC").
 		Offset(offset).
 		Limit(limit).
-		Select("id, company_id, name, email, is_active, role_id, created_at, updated_at").
+		Select("id, company_id, name, email, phone, is_root, is_active, role_id, created_at, updated_at").
 		Find(&users).Error
 
 	return users, total, err
@@ -727,7 +728,7 @@ func (r *Repository) ListUsers(companyID uuid.UUID, offset, limit int, search st
 func (r *Repository) UpdateUser(companyID uuid.UUID, u *User) error {
 	result := r.db.Model(&User{}).
 		Where("company_id = ? AND id = ?", companyID, u.ID).
-		Select("name", "email", "password", "is_active", "role_id").
+		Select("name", "email", "phone", "password", "is_active", "role_id").
 		Updates(u)
 	if result.Error != nil {
 		return result.Error
@@ -972,6 +973,142 @@ func (r *Repository) RegisterCompany(company *Company, owner *User) error {
 
 		return nil
 	})
+}
+
+// toCompanyResponse maps a company onto the platform-facing DTO.
+func toCompanyResponse(c Company) dtos.CompanyResponse {
+	return dtos.CompanyResponse{
+		ID:         c.ID,
+		Name:       c.Name,
+		Slug:       c.Slug,
+		Phone:      c.Phone,
+		Status:     string(c.Status),
+		ApprovedAt: c.ApprovedAt,
+		CreatedAt:  c.CreatedAt,
+		UpdatedAt:  c.UpdatedAt,
+	}
+}
+
+// ListCompanies returns paginated companies for the platform admin, optionally
+// filtered by status and a free-text search over name, slug and phone.
+func (r *Repository) ListCompanies(filter dtos.CompanyListFilter) ([]dtos.CompanyResponse, int64, error) {
+	query := r.db.Model(&Company{})
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.Search != "" {
+		like := "%" + filter.Search + "%"
+		query = query.Where("name ILIKE ? OR slug ILIKE ? OR phone ILIKE ?", like, like, like)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var companies []Company
+	if err := query.Order("created_at DESC").
+		Offset(filter.Offset).Limit(filter.Limit).
+		Find(&companies).Error; err != nil {
+		return nil, 0, err
+	}
+
+	out := make([]dtos.CompanyResponse, 0, len(companies))
+	for _, c := range companies {
+		out = append(out, toCompanyResponse(c))
+	}
+	return out, total, nil
+}
+
+// CountCompanies returns the number of companies per status.
+func (r *Repository) CountCompanies() (*dtos.PlatformCountsDto, error) {
+	counts := &dtos.PlatformCountsDto{}
+
+	if err := r.db.Model(&Company{}).Count(&counts.Total).Error; err != nil {
+		return nil, err
+	}
+
+	byStatus := func(s CompanyStatus) (int64, error) {
+		var n int64
+		err := r.db.Model(&Company{}).Where("status = ?", s).Count(&n).Error
+		return n, err
+	}
+
+	var err error
+	if counts.Pending, err = byStatus(CompanyStatusPending); err != nil {
+		return nil, err
+	}
+	if counts.Approved, err = byStatus(CompanyStatusApproved); err != nil {
+		return nil, err
+	}
+	if counts.Rejected, err = byStatus(CompanyStatusRejected); err != nil {
+		return nil, err
+	}
+	if counts.Suspended, err = byStatus(CompanyStatusSuspended); err != nil {
+		return nil, err
+	}
+
+	return counts, nil
+}
+
+// UpdateCompanyStatus changes a company's lifecycle status. Approving stamps the
+// approval time; re-opening a company clears it.
+func (r *Repository) UpdateCompanyStatus(id uuid.UUID, status CompanyStatus) (*Company, error) {
+	updates := map[string]interface{}{"status": status}
+	if status == CompanyStatusApproved {
+		now := time.Now()
+		updates["approved_at"] = &now
+	} else {
+		updates["approved_at"] = nil
+	}
+
+	result := r.db.Model(&Company{}).Where("id = ?", id).Updates(updates)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("company %s: %w", id, ErrNotFound)
+	}
+	return r.GetCompanyByID(id)
+}
+
+// GetRootUserByCompany returns the company owner (the account flagged is_root).
+func (r *Repository) GetRootUserByCompany(companyID uuid.UUID) (*User, error) {
+	var u User
+	err := r.db.Where("company_id = ? AND is_root = ?", companyID, true).First(&u).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("root user for company %s: %w", companyID, ErrNotFound)
+	}
+	return &u, err
+}
+
+// =============================================================================
+// Platform Users (platform operators — deliberately separate from company users)
+// =============================================================================
+
+// CreatePlatformUser inserts a new platform user.
+func (r *Repository) CreatePlatformUser(u *PlatformUser) error {
+	return r.db.Create(u).Error
+}
+
+// GetPlatformUserByEmail retrieves a platform user by email.
+func (r *Repository) GetPlatformUserByEmail(email string) (*PlatformUser, error) {
+	var u PlatformUser
+	err := r.db.Where("email = ?", email).First(&u).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("platform user %q: %w", email, ErrNotFound)
+	}
+	return &u, err
+}
+
+// GetPlatformUserByID retrieves a platform user by UUID.
+func (r *Repository) GetPlatformUserByID(id uuid.UUID) (*PlatformUser, error) {
+	var u PlatformUser
+	err := r.db.Where("id = ?", id).First(&u).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("platform user %s: %w", id, ErrNotFound)
+	}
+	return &u, err
 }
 
 // =============================================================================
