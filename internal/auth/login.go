@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/dtos"
@@ -21,8 +22,13 @@ func NewAuthService(repo *database.Repository, session *SessionStore) *AuthServi
 	return &AuthService{repo: repo, session: session}
 }
 
-// Register creates a new user account.
+// Register onboards a brand new company together with its root (owner) user. The
+// root user is granted the company's "Super Admin" role, which carries every
+// permission.
 func (s *AuthService) Register(req dtos.RegisterRequest) (*dtos.UserResponse, error) {
+	if req.CompanyName == "" {
+		return nil, errors.New("company name is required")
+	}
 	if req.Name == "" {
 		return nil, errors.New("name is required")
 	}
@@ -33,7 +39,7 @@ func (s *AuthService) Register(req dtos.RegisterRequest) (*dtos.UserResponse, er
 		return nil, errors.New("password must be at least 8 characters")
 	}
 
-	// Check duplicate email
+	// Emails are globally unique — one account, one company.
 	existing, _ := s.repo.GetUserByEmail(req.Email)
 	if existing != nil {
 		return nil, errors.New("email already registered")
@@ -45,19 +51,51 @@ func (s *AuthService) Register(req dtos.RegisterRequest) (*dtos.UserResponse, er
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	user := &database.User{
+	company := &database.Company{
+		Name:     req.CompanyName,
+		Slug:     slugify(req.CompanyName),
+		IsActive: true,
+	}
+
+	owner := &database.User{
 		Name:     req.Name,
 		Email:    req.Email,
 		Password: string(hashed),
 		IsActive: true,
 	}
 
-	if err := s.repo.CreateUser(user); err != nil {
-		return nil, fmt.Errorf("create user: %w", err)
+	if err := s.repo.RegisterCompany(company, owner); err != nil {
+		return nil, fmt.Errorf("register company: %w", err)
 	}
 
-	resp := toUserResponse(user)
+	resp := toUserResponse(owner)
 	return &resp, nil
+}
+
+// slugify builds a URL-safe company slug and appends a short random suffix so
+// two companies with the same name never collide.
+func slugify(name string) string {
+	var b strings.Builder
+	lastDash := false
+
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		slug = "company"
+	}
+	return fmt.Sprintf("%s-%s", slug, uuid.New().String()[:8])
 }
 
 // Login authenticates a user and issues a Redis-backed access + refresh token pair.
@@ -148,7 +186,14 @@ func (s *AuthService) issueTokens(user *database.User) (*dtos.LoginResponse, err
 
 	ctx := context.Background()
 
-	accessToken, err := s.session.CreateSession(ctx, sessionClaims(fullUser))
+	claims := sessionClaims(fullUser)
+	if fullUser.CompanyID != uuid.Nil {
+		if company, err := s.repo.GetCompanyByID(fullUser.CompanyID); err == nil {
+			claims.CompanyName = company.Name
+		}
+	}
+
+	accessToken, err := s.session.CreateSession(ctx, claims)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -181,6 +226,7 @@ func sessionClaims(u *database.User) *SessionClaims {
 
 	return &SessionClaims{
 		UserID:      u.ID.String(),
+		CompanyID:   u.CompanyID.String(),
 		Name:        u.Name,
 		Email:       u.Email,
 		Role:        roleName,
@@ -192,6 +238,7 @@ func sessionClaims(u *database.User) *SessionClaims {
 func toUserResponse(u *database.User) dtos.UserResponse {
 	return dtos.UserResponse{
 		ID:        u.ID,
+		CompanyID: u.CompanyID,
 		Name:      u.Name,
 		Email:     u.Email,
 		IsActive:  u.IsActive,

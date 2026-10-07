@@ -8,6 +8,7 @@ import (
 
 type ProductResponse struct {
 	ID                uuid.UUID         `json:"id"`
+	CompanyID         uuid.UUID         `json:"company_id"`
 	Name              string            `json:"name"`
 	Description       string            `json:"description"`
 	ImageURL          string            `json:"image_url"`

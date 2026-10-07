@@ -39,9 +39,10 @@ func (r *Repository) CreateProduct(p *Product) error {
 }
 
 // GetProductByID retrieves a product by its UUID (non-deleted), including its images.
-func (r *Repository) GetProductByID(id uuid.UUID) (*Product, error) {
+func (r *Repository) GetProductByID(companyID, id uuid.UUID) (*Product, error) {
 	var p Product
-	err := r.db.Preload("Images", orderProductImages).Where("id = ?", id).First(&p).Error
+	err := r.db.Preload("Images", orderProductImages).
+		Where("company_id = ? AND id = ?", companyID, id).First(&p).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("product %s: %w", id, ErrNotFound)
 	}
@@ -52,10 +53,11 @@ func (r *Repository) GetProductByID(id uuid.UUID) (*Product, error) {
 	return &p, nil
 }
 
-// GetProductByName retrieves a product by exact name match, including its images.
-func (r *Repository) GetProductByName(name string) (*Product, error) {
+// GetProductByName retrieves a product by exact name match within a company.
+func (r *Repository) GetProductByName(companyID uuid.UUID, name string) (*Product, error) {
 	var p Product
-	err := r.db.Preload("Images", orderProductImages).Where("name = ?", name).First(&p).Error
+	err := r.db.Preload("Images", orderProductImages).
+		Where("company_id = ? AND name = ?", companyID, name).First(&p).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("product %q: %w", name, ErrNotFound)
 	}
@@ -67,15 +69,16 @@ func (r *Repository) GetProductByName(name string) (*Product, error) {
 }
 
 // ListProducts returns paginated products ordered by creation time, including their images.
-func (r *Repository) ListProducts(offset, limit int) ([]Product, int64, error) {
+func (r *Repository) ListProducts(companyID uuid.UUID, offset, limit int) ([]Product, int64, error) {
 	var products []Product
 	var total int64
 
-	if err := r.db.Model(&Product{}).Count(&total).Error; err != nil {
+	if err := r.db.Model(&Product{}).Where("company_id = ?", companyID).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	err := r.db.Preload("Images", orderProductImages).
+		Where("company_id = ?", companyID).
 		Order("created_at DESC").Offset(offset).Limit(limit).Find(&products).Error
 	if err != nil {
 		return nil, 0, err
@@ -91,12 +94,18 @@ func (r *Repository) ListProducts(offset, limit int) ([]Product, int64, error) {
 
 // UpdateProduct updates name, description, price, and the low stock threshold of
 // an existing product. Images are managed separately via ReplaceProductImages.
-func (r *Repository) UpdateProduct(p *Product) error {
-	result := r.db.Model(p).Select("name", "description", "price", "low_stock_threshold").Updates(p)
+func (r *Repository) UpdateProduct(companyID uuid.UUID, p *Product) error {
+	result := r.db.Model(&Product{}).
+		Where("company_id = ? AND id = ?", companyID, p.ID).
+		Select("name", "description", "price", "low_stock_threshold").
+		Updates(p)
+	if result.Error != nil {
+		return result.Error
+	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("product %s: %w", p.ID, ErrNotFound)
 	}
-	return result.Error
+	return nil
 }
 
 // ReplaceProductImages replaces the full set of images for a product inside a
@@ -146,9 +155,9 @@ func (r *Repository) ReplaceProductImages(productID uuid.UUID, images []dtos.Pro
 }
 
 // DeleteProduct soft-deletes a product by ID, together with its images.
-func (r *Repository) DeleteProduct(id uuid.UUID) error {
+func (r *Repository) DeleteProduct(companyID, id uuid.UUID) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Delete(&Product{}, "id = ?", id)
+		result := tx.Where("company_id = ? AND id = ?", companyID, id).Delete(&Product{})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -193,43 +202,45 @@ func (r *Repository) CreateInventory(inv *Inventory) error {
 	return r.db.Create(inv).Error
 }
 
-// GetInventoryByID retrieves an inventory by UUID.
-func (r *Repository) GetInventoryByID(id uuid.UUID) (*Inventory, error) {
+// GetInventoryByID retrieves an inventory by UUID within a company.
+func (r *Repository) GetInventoryByID(companyID, id uuid.UUID) (*Inventory, error) {
 	var inv Inventory
-	err := r.db.Where("id = ?", id).First(&inv).Error
+	err := r.db.Where("company_id = ? AND id = ?", companyID, id).First(&inv).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("inventory %s: %w", id, ErrNotFound)
 	}
 	return &inv, err
 }
 
-// GetInventoryByName retrieves an inventory by exact name match.
-func (r *Repository) GetInventoryByName(name string) (*Inventory, error) {
+// GetInventoryByName retrieves an inventory by exact name match within a company.
+func (r *Repository) GetInventoryByName(companyID uuid.UUID, name string) (*Inventory, error) {
 	var inv Inventory
-	err := r.db.Where("name = ?", name).First(&inv).Error
+	err := r.db.Where("company_id = ? AND name = ?", companyID, name).First(&inv).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("inventory %q: %w", name, ErrNotFound)
 	}
 	return &inv, err
 }
 
-// ListInventories returns paginated inventories.
-func (r *Repository) ListInventories(offset, limit int) ([]Inventory, int64, error) {
+// ListInventories returns paginated inventories for a company.
+func (r *Repository) ListInventories(companyID uuid.UUID, offset, limit int) ([]Inventory, int64, error) {
 	var inventories []Inventory
 	var total int64
 
-	if err := r.db.Model(&Inventory{}).Count(&total).Error; err != nil {
+	if err := r.db.Model(&Inventory{}).Where("company_id = ?", companyID).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	err := r.db.Order("created_at DESC").Offset(offset).Limit(limit).Find(&inventories).Error
+	err := r.db.Where("company_id = ?", companyID).
+		Order("created_at DESC").Offset(offset).Limit(limit).Find(&inventories).Error
 	return inventories, total, err
 }
 
-func (r *Repository) ListAllInventories() ([]Inventory, error) {
+// ListAllInventories returns every inventory belonging to a company.
+func (r *Repository) ListAllInventories(companyID uuid.UUID) ([]Inventory, error) {
 	var inventories []Inventory
 
-	err := r.db.Order("created_at DESC").Find(&inventories).Error
+	err := r.db.Where("company_id = ?", companyID).Order("created_at DESC").Find(&inventories).Error
 
 	if err != nil {
 		return nil, err
@@ -239,17 +250,23 @@ func (r *Repository) ListAllInventories() ([]Inventory, error) {
 }
 
 // UpdateInventory updates the name, address, and coordinates.
-func (r *Repository) UpdateInventory(inv *Inventory) error {
-	result := r.db.Model(inv).Select("name", "address", "latitude", "longitude").Updates(inv)
+func (r *Repository) UpdateInventory(companyID uuid.UUID, inv *Inventory) error {
+	result := r.db.Model(&Inventory{}).
+		Where("company_id = ? AND id = ?", companyID, inv.ID).
+		Select("name", "address", "latitude", "longitude").
+		Updates(inv)
+	if result.Error != nil {
+		return result.Error
+	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("inventory %s: %w", inv.ID, ErrNotFound)
 	}
-	return result.Error
+	return nil
 }
 
 // DeleteInventory soft-deletes an inventory by ID.
-func (r *Repository) DeleteInventory(id uuid.UUID) error {
-	result := r.db.Delete(&Inventory{}, "id = ?", id)
+func (r *Repository) DeleteInventory(companyID, id uuid.UUID) error {
+	result := r.db.Where("company_id = ? AND id = ?", companyID, id).Delete(&Inventory{})
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("inventory %s: %w", id, ErrNotFound)
 	}
@@ -261,13 +278,13 @@ func (r *Repository) DeleteInventory(id uuid.UUID) error {
 // =============================================================================
 
 // SetProductStock sets an absolute quantity (overwrites).
-func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity int) error {
+func (r *Repository) SetProductStock(companyID, inventoryID, productID uuid.UUID, quantity int) error {
 	if quantity < 0 {
 		return errors.New("quantity cannot be negative")
 	}
 
 	if quantity == 0 {
-		result := r.db.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
+		result := r.db.Where("company_id = ? AND inventory_id = ? AND product_id = ?", companyID, inventoryID, productID).
 			Delete(&Stock{})
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("stock entry not found: %w", ErrNotFound)
@@ -276,6 +293,7 @@ func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity 
 	}
 
 	ip := Stock{
+		CompanyID:   companyID,
 		InventoryID: inventoryID,
 		ProductID:   productID,
 		Quantity:    quantity,
@@ -288,8 +306,8 @@ func (r *Repository) SetProductStock(inventoryID, productID uuid.UUID, quantity 
 }
 
 // RemoveProductFromInventory deletes the inventory-product link entirely.
-func (r *Repository) RemoveProductFromInventory(inventoryID, productID uuid.UUID) error {
-	result := r.db.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
+func (r *Repository) RemoveProductFromInventory(companyID, inventoryID, productID uuid.UUID) error {
+	result := r.db.Where("company_id = ? AND inventory_id = ? AND product_id = ?", companyID, inventoryID, productID).
 		Delete(&Stock{})
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("stock entry not found: %w", ErrNotFound)
@@ -298,9 +316,9 @@ func (r *Repository) RemoveProductFromInventory(inventoryID, productID uuid.UUID
 }
 
 // GetStock returns the quantity of a specific product at a specific inventory.
-func (r *Repository) GetStock(inventoryID, productID uuid.UUID) (*Stock, error) {
+func (r *Repository) GetStock(companyID, inventoryID, productID uuid.UUID) (*Stock, error) {
 	var ip Stock
-	err := r.db.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).First(&ip).Error
+	err := r.db.Where("company_id = ? AND inventory_id = ? AND product_id = ?", companyID, inventoryID, productID).First(&ip).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("stock entry not found: %w", ErrNotFound)
 	}
@@ -320,7 +338,8 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 			 LIMIT 1) AS product_image_url`).
 		Joins("LEFT JOIN products ON products.id = stock.product_id").
 		Joins("LEFT JOIN inventories ON inventories.id = stock.inventory_id").
-		Where("stock.quantity > 0")
+		Where("stock.quantity > 0").
+		Where("stock.company_id = ?", filter.CompanyID)
 
 	if filter.InventoryID != nil {
 		query = query.Where("stock.inventory_id = ?", *filter.InventoryID)
@@ -342,7 +361,8 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 	var total int64
 	countQuery := r.db.Table("stock").
 		Joins("LEFT JOIN products ON products.id = stock.product_id").
-		Where("stock.quantity > 0")
+		Where("stock.quantity > 0").
+		Where("stock.company_id = ?", filter.CompanyID)
 	if filter.InventoryID != nil {
 		countQuery = countQuery.Where("stock.inventory_id = ?", *filter.InventoryID)
 	}
@@ -412,7 +432,7 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 // GetDashboardData returns aggregated counts and the low-stock items for the dashboard.
 // An entry is low stock when its quantity falls below the threshold configured on
 // its product; products with a threshold of 0 are never flagged.
-func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
+func (r *Repository) GetDashboardData(companyID uuid.UUID) (*dtos.InventoryDashboardDto, error) {
 	dto := &dtos.InventoryDashboardDto{}
 
 	// Total value (sum of quantity * price)
@@ -420,6 +440,7 @@ func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
 	if err := r.db.Table("stock").
 		Select("COALESCE(SUM(stock.quantity * products.price), 0)").
 		Joins("JOIN products ON products.id = stock.product_id").
+		Where("stock.company_id = ?", companyID).
 		Where("products.deleted_at IS NULL").
 		Scan(&totalValue).Error; err != nil {
 		return nil, fmt.Errorf("dashboard total value: %w", err)
@@ -431,6 +452,7 @@ func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
 	if err := r.db.Table("stock").
 		Select("DISTINCT product_id").
 		Where("quantity > 0").
+		Where("company_id = ?", companyID).
 		Count(&activeProducts).Error; err != nil {
 		return nil, fmt.Errorf("dashboard active products: %w", err)
 	}
@@ -438,7 +460,7 @@ func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
 
 	// Locations count
 	var locationsCount int64
-	if err := r.db.Model(&Inventory{}).Count(&locationsCount).Error; err != nil {
+	if err := r.db.Model(&Inventory{}).Where("company_id = ?", companyID).Count(&locationsCount).Error; err != nil {
 		return nil, fmt.Errorf("dashboard locations: %w", err)
 	}
 	dto.Counts.Locations = int(locationsCount)
@@ -461,6 +483,7 @@ func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
 		return r.db.Table("stock").
 			Joins("JOIN products ON products.id = stock.product_id").
 			Joins("JOIN inventories ON inventories.id = stock.inventory_id").
+			Where("stock.company_id = ?", companyID).
 			Where("products.low_stock_threshold > 0").
 			Where("stock.quantity < products.low_stock_threshold").
 			Where("products.deleted_at IS NULL").
@@ -472,6 +495,7 @@ func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
 	//    otherwise never be reported — even though zero is the lowest stock possible.
 	noStock := func() *gorm.DB {
 		return r.db.Table("products").
+			Where("products.company_id = ?", companyID).
 			Where("products.low_stock_threshold > 0").
 			Where("products.deleted_at IS NULL").
 			Where("NOT EXISTS (SELECT 1 FROM stock WHERE stock.product_id = products.id)")
@@ -555,7 +579,7 @@ func (r *Repository) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
 
 // DeductStock atomically subtracts quantity from a product at an inventory.
 // Returns an error if stock would go negative.
-func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) error {
+func (r *Repository) DeductStock(companyID, inventoryID, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("deduction amount must be positive")
 	}
@@ -565,7 +589,7 @@ func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) e
 
 		// SELECT ... FOR UPDATE locks the row against concurrent writes
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
+			Where("company_id = ? AND inventory_id = ? AND product_id = ?", companyID, inventoryID, productID).
 			First(&ip).Error
 		if err != nil {
 			return fmt.Errorf("stock entry not found: %w", ErrNotFound)
@@ -578,7 +602,7 @@ func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) e
 		ip.Quantity -= amount
 
 		if ip.Quantity == 0 {
-			return tx.Where("inventory_id = ? AND product_id = ?", inventoryID, productID).
+			return tx.Where("company_id = ? AND inventory_id = ? AND product_id = ?", companyID, inventoryID, productID).
 				Delete(&Stock{}).Error
 		}
 
@@ -588,12 +612,13 @@ func (r *Repository) DeductStock(inventoryID, productID uuid.UUID, amount int) e
 
 // AddStock atomically adds quantity to a product at an inventory.
 // Creates a new stock entry if one doesn't exist yet.
-func (r *Repository) AddStock(inventoryID, productID uuid.UUID, amount int) error {
+func (r *Repository) AddStock(companyID, inventoryID, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("addition amount must be positive")
 	}
 
 	ip := Stock{
+		CompanyID:   companyID,
 		InventoryID: inventoryID,
 		ProductID:   productID,
 		Quantity:    amount,
@@ -606,7 +631,7 @@ func (r *Repository) AddStock(inventoryID, productID uuid.UUID, amount int) erro
 }
 
 // TransferStock moves quantity from one inventory to another atomically.
-func (r *Repository) TransferStock(fromInv, toInv, productID uuid.UUID, amount int) error {
+func (r *Repository) TransferStock(companyID, fromInv, toInv, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("transfer amount must be positive")
 	}
@@ -614,11 +639,11 @@ func (r *Repository) TransferStock(fromInv, toInv, productID uuid.UUID, amount i
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		repo := NewRepository(tx)
 
-		if err := repo.DeductStock(fromInv, productID, amount); err != nil {
+		if err := repo.DeductStock(companyID, fromInv, productID, amount); err != nil {
 			return fmt.Errorf("deduct from source: %w", err)
 		}
 
-		if err := repo.AddStock(toInv, productID, amount); err != nil {
+		if err := repo.AddStock(companyID, toInv, productID, amount); err != nil {
 			return fmt.Errorf("add to destination: %w", err)
 		}
 
@@ -674,12 +699,12 @@ func (r *Repository) GetUserByEmail(email string) (*User, error) {
 	return &u, err
 }
 
-// ListUsers returns a paginated, searchable list of users.
-func (r *Repository) ListUsers(offset, limit int, search string) ([]dtos.UserDto, int64, error) {
+// ListUsers returns a paginated, searchable list of users within a company.
+func (r *Repository) ListUsers(companyID uuid.UUID, offset, limit int, search string) ([]dtos.UserDto, int64, error) {
 	var users []dtos.UserDto
 	var total int64
 
-	query := r.db.Model(&User{})
+	query := r.db.Model(&User{}).Where("company_id = ?", companyID)
 
 	if search != "" {
 		query = query.Where("name ILIKE ? OR email ILIKE ?", "%"+search+"%", "%"+search+"%")
@@ -692,33 +717,39 @@ func (r *Repository) ListUsers(offset, limit int, search string) ([]dtos.UserDto
 	err := query.Order("created_at DESC").
 		Offset(offset).
 		Limit(limit).
-		Select("id, name, email, is_active, role_id, created_at, updated_at").
+		Select("id, company_id, name, email, is_active, role_id, created_at, updated_at").
 		Find(&users).Error
 
 	return users, total, err
 }
 
 // UpdateUser updates the name, email, and optionally password of a user.
-func (r *Repository) UpdateUser(u *User) error {
-	result := r.db.Model(u).Select("name", "email", "password", "is_active", "role_id").Updates(u)
+func (r *Repository) UpdateUser(companyID uuid.UUID, u *User) error {
+	result := r.db.Model(&User{}).
+		Where("company_id = ? AND id = ?", companyID, u.ID).
+		Select("name", "email", "password", "is_active", "role_id").
+		Updates(u)
+	if result.Error != nil {
+		return result.Error
+	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("user %s: %w", u.ID, ErrNotFound)
 	}
-	return result.Error
+	return nil
 }
 
-// DeleteUser soft-deletes a user by ID.
-func (r *Repository) DeleteUser(id uuid.UUID) error {
-	result := r.db.Delete(&User{}, "id = ?", id)
+// DeleteUser soft-deletes a user by ID within a company.
+func (r *Repository) DeleteUser(companyID, id uuid.UUID) error {
+	result := r.db.Where("company_id = ? AND id = ?", companyID, id).Delete(&User{})
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("user %s: %w", id, ErrNotFound)
 	}
 	return result.Error
 }
 
-// SetUserActiveStatus activates or deactivates a user.
-func (r *Repository) SetUserActiveStatus(id uuid.UUID, active bool) error {
-	result := r.db.Model(&User{}).Where("id = ?", id).Update("is_active", active)
+// SetUserActiveStatus activates or deactivates a user within a company.
+func (r *Repository) SetUserActiveStatus(companyID, id uuid.UUID, active bool) error {
+	result := r.db.Model(&User{}).Where("company_id = ? AND id = ?", companyID, id).Update("is_active", active)
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("user %s: %w", id, ErrNotFound)
 	}
@@ -734,52 +765,58 @@ func (r *Repository) CreateRole(role *Role) error {
 	return r.db.Create(role).Error
 }
 
-// GetRoleByID retrieves a role by UUID, including its permissions.
-func (r *Repository) GetRoleByID(id uuid.UUID) (*Role, error) {
+// GetRoleByID retrieves a role by UUID within a company, including its permissions.
+func (r *Repository) GetRoleByID(companyID, id uuid.UUID) (*Role, error) {
 	var role Role
-	err := r.db.Preload("Permissions").Where("id = ?", id).First(&role).Error
+	err := r.db.Preload("Permissions").Where("company_id = ? AND id = ?", companyID, id).First(&role).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("role %s: %w", id, ErrNotFound)
 	}
 	return &role, err
 }
 
-// GetRoleByName retrieves a role by name, including its permissions.
-func (r *Repository) GetRoleByName(name string) (*Role, error) {
+// GetRoleByName retrieves a role by name within a company, including its permissions.
+func (r *Repository) GetRoleByName(companyID uuid.UUID, name string) (*Role, error) {
 	var role Role
-	err := r.db.Preload("Permissions").Where("name = ?", name).First(&role).Error
+	err := r.db.Preload("Permissions").Where("company_id = ? AND name = ?", companyID, name).First(&role).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("role %q: %w", name, ErrNotFound)
 	}
 	return &role, err
 }
 
-// ListRoles returns all roles with their permissions.
-func (r *Repository) ListRoles() ([]Role, error) {
+// ListRoles returns all roles of a company with their permissions.
+func (r *Repository) ListRoles(companyID uuid.UUID) ([]Role, error) {
 	var roles []Role
-	err := r.db.Preload("Permissions").Order("name ASC").Find(&roles).Error
+	err := r.db.Preload("Permissions").Where("company_id = ?", companyID).Order("name ASC").Find(&roles).Error
 	return roles, err
 }
 
 // GetUserCountByRoleID returns the number of users assigned to a role.
-func (r *Repository) GetUserCountByRoleID(roleID uuid.UUID) (int64, error) {
+func (r *Repository) GetUserCountByRoleID(companyID, roleID uuid.UUID) (int64, error) {
 	var count int64
-	err := r.db.Model(&User{}).Where("role_id = ?", roleID).Count(&count).Error
+	err := r.db.Model(&User{}).Where("company_id = ? AND role_id = ?", companyID, roleID).Count(&count).Error
 	return count, err
 }
 
 // UpdateRole updates name and description of a role.
-func (r *Repository) UpdateRole(role *Role) error {
-	result := r.db.Model(role).Select("name", "description").Updates(role)
+func (r *Repository) UpdateRole(companyID uuid.UUID, role *Role) error {
+	result := r.db.Model(&Role{}).
+		Where("company_id = ? AND id = ?", companyID, role.ID).
+		Select("name", "description").
+		Updates(role)
+	if result.Error != nil {
+		return result.Error
+	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("role %s: %w", role.ID, ErrNotFound)
 	}
-	return result.Error
+	return nil
 }
 
-// DeleteRole soft-deletes a role by ID.
-func (r *Repository) DeleteRole(id uuid.UUID) error {
-	result := r.db.Delete(&Role{}, "id = ?", id)
+// DeleteRole soft-deletes a role by ID within a company.
+func (r *Repository) DeleteRole(companyID, id uuid.UUID) error {
+	result := r.db.Where("company_id = ? AND id = ?", companyID, id).Delete(&Role{})
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("role %s: %w", id, ErrNotFound)
 	}
@@ -787,8 +824,8 @@ func (r *Repository) DeleteRole(id uuid.UUID) error {
 }
 
 // AddPermissionToRole associates a permission with a role.
-func (r *Repository) AddPermissionToRole(roleID, permissionID uuid.UUID) error {
-	role, err := r.GetRoleByID(roleID)
+func (r *Repository) AddPermissionToRole(companyID, roleID, permissionID uuid.UUID) error {
+	role, err := r.GetRoleByID(companyID, roleID)
 	if err != nil {
 		return err
 	}
@@ -800,8 +837,8 @@ func (r *Repository) AddPermissionToRole(roleID, permissionID uuid.UUID) error {
 }
 
 // RemovePermissionFromRole removes a permission association from a role.
-func (r *Repository) RemovePermissionFromRole(roleID, permissionID uuid.UUID) error {
-	role, err := r.GetRoleByID(roleID)
+func (r *Repository) RemovePermissionFromRole(companyID, roleID, permissionID uuid.UUID) error {
+	role, err := r.GetRoleByID(companyID, roleID)
 	if err != nil {
 		return err
 	}
@@ -864,6 +901,77 @@ func (r *Repository) DeletePermission(id uuid.UUID) error {
 		return fmt.Errorf("permission %s: %w", id, ErrNotFound)
 	}
 	return result.Error
+}
+
+// =============================================================================
+// Company (tenant)
+// =============================================================================
+
+// SuperAdminRoleName is the name of the all-permissions role provisioned for
+// every company. Permission codes themselves are global.
+const SuperAdminRoleName = "Super Admin"
+
+// CreateCompany inserts a new company.
+func (r *Repository) CreateCompany(c *Company) error {
+	return r.db.Create(c).Error
+}
+
+// GetCompanyBySlug retrieves a company by its unique slug.
+func (r *Repository) GetCompanyBySlug(slug string) (*Company, error) {
+	var c Company
+	err := r.db.Where("slug = ?", slug).First(&c).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("company %q: %w", slug, ErrNotFound)
+	}
+	return &c, err
+}
+
+// GetCompanyByID retrieves a company by its UUID.
+func (r *Repository) GetCompanyByID(id uuid.UUID) (*Company, error) {
+	var c Company
+	err := r.db.Where("id = ?", id).First(&c).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("company %s: %w", id, ErrNotFound)
+	}
+	return &c, err
+}
+
+// RegisterCompany provisions a new tenant — the company, its "Super Admin" role
+// (granted every permission) and its root user — inside a single transaction.
+// The root user becomes the owner (admin) of the company.
+func (r *Repository) RegisterCompany(company *Company, owner *User) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(company).Error; err != nil {
+			return fmt.Errorf("create company: %w", err)
+		}
+
+		role := &Role{
+			CompanyID:   company.ID,
+			Name:        SuperAdminRoleName,
+			Description: "Full access to every company resource",
+		}
+		if err := tx.Create(role).Error; err != nil {
+			return fmt.Errorf("create super admin role: %w", err)
+		}
+
+		var perms []Permission
+		if err := tx.Find(&perms).Error; err != nil {
+			return fmt.Errorf("load permissions: %w", err)
+		}
+		if len(perms) > 0 {
+			if err := tx.Model(role).Association("Permissions").Append(perms); err != nil {
+				return fmt.Errorf("attach permissions: %w", err)
+			}
+		}
+
+		owner.CompanyID = company.ID
+		owner.RoleID = &role.ID
+		if err := tx.Create(owner).Error; err != nil {
+			return fmt.Errorf("create owner: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // =============================================================================

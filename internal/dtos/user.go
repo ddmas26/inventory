@@ -9,6 +9,7 @@ import (
 // UserResponse is the public representation of a user (no password).
 type UserResponse struct {
 	ID        uuid.UUID  `json:"id"`
+	CompanyID uuid.UUID  `json:"company_id"`
 	Name      string     `json:"name"`
 	Email     string     `json:"email"`
 	IsActive  bool       `json:"is_active"`
@@ -20,6 +21,7 @@ type UserResponse struct {
 // UserDto is used for listing users (no password).
 type UserDto struct {
 	ID        uuid.UUID  `json:"id"`
+	CompanyID uuid.UUID  `json:"company_id"`
 	Name      string     `json:"name"`
 	Email     string     `json:"email"`
 	IsActive  bool       `json:"is_active"`

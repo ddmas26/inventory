@@ -7,6 +7,7 @@ import (
 )
 
 type ListStockFilter struct {
+	CompanyID   uuid.UUID
 	InventoryID *uuid.UUID
 	ProductID   *uuid.UUID
 	CreatedFrom *time.Time

@@ -43,7 +43,13 @@ type transferStockRequest struct {
 
 // AddStock handles POST /api/stock/add
 func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "stock.create") {
+	claims, ok := h.authorize(w, r, "stock.create")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -58,12 +64,12 @@ func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.AddStock(req.InventoryID, req.ProductID, req.Quantity); err != nil {
+	if err := h.StockSvc.AddStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.StockSvc.GetStock(req.InventoryID, req.ProductID)
+	stock, err := h.StockSvc.GetStock(cid, req.InventoryID, req.ProductID)
 	if err != nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock added successfully"})
 		return
@@ -74,7 +80,13 @@ func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
 
 // DeductStock handles POST /api/stock/deduct
 func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "stock.edit") {
+	claims, ok := h.authorize(w, r, "stock.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -89,12 +101,12 @@ func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.DeductStock(req.InventoryID, req.ProductID, req.Quantity); err != nil {
+	if err := h.StockSvc.DeductStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.StockSvc.GetStock(req.InventoryID, req.ProductID)
+	stock, err := h.StockSvc.GetStock(cid, req.InventoryID, req.ProductID)
 	if err != nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock deducted successfully"})
 		return
@@ -105,7 +117,13 @@ func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
 
 // SetStock handles POST /api/stock/set
 func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "stock.edit") {
+	claims, ok := h.authorize(w, r, "stock.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -120,12 +138,12 @@ func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.SetStock(req.InventoryID, req.ProductID, req.Quantity); err != nil {
+	if err := h.StockSvc.SetStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.StockSvc.GetStock(req.InventoryID, req.ProductID)
+	stock, err := h.StockSvc.GetStock(cid, req.InventoryID, req.ProductID)
 	if err != nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock set successfully"})
 		return
@@ -136,11 +154,17 @@ func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
 
 // ListStock handles GET /api/stock
 func (h *Handler) ListStock(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "stock.read") {
+	claims, ok := h.authorize(w, r, "stock.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
-	filter := dtos.ListStockFilter{}
+	filter := dtos.ListStockFilter{CompanyID: cid}
 
 	if invID := r.URL.Query().Get("inventory_id"); invID != "" {
 		id, err := uuid.Parse(invID)
@@ -213,7 +237,13 @@ func (h *Handler) ListStock(w http.ResponseWriter, r *http.Request) {
 
 // RemoveStock handles POST /api/stock/remove
 func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "stock.delete") {
+	claims, ok := h.authorize(w, r, "stock.delete")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -223,7 +253,7 @@ func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.RemoveStock(req.InventoryID, req.ProductID); err != nil {
+	if err := h.StockSvc.RemoveStock(cid, req.InventoryID, req.ProductID); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "stock entry not found")
 			return
@@ -237,7 +267,13 @@ func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
 
 // TransferStock handles POST /api/stock/transfer
 func (h *Handler) TransferStock(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "stock.edit") {
+	claims, ok := h.authorize(w, r, "stock.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -252,7 +288,7 @@ func (h *Handler) TransferStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.TransferStock(req.FromInventoryID, req.ToInventoryID, req.ProductID, req.Quantity); err != nil {
+	if err := h.StockSvc.TransferStock(cid, req.FromInventoryID, req.ToInventoryID, req.ProductID, req.Quantity); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

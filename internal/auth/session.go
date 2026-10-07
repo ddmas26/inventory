@@ -13,6 +13,8 @@ import (
 // SessionClaims holds the user data stored in a Redis session.
 type SessionClaims struct {
 	UserID      string   `json:"user_id"`
+	CompanyID   string   `json:"company_id"`
+	CompanyName string   `json:"company_name"`
 	Name        string   `json:"name"`
 	Email       string   `json:"email"`
 	Role        string   `json:"role"`

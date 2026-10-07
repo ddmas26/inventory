@@ -24,15 +24,20 @@ type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// RegisterRequest is the body of POST /api/auth/register. It creates a brand new
+// company together with its root user, who is granted every permission.
 type RegisterRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	CompanyName string `json:"company_name"`
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
 }
 
 // ClaimsResponse is returned by GET /api/auth/me.
 type ClaimsResponse struct {
 	UserID      string   `json:"user_id"`
+	CompanyID   string   `json:"company_id"`
+	CompanyName string   `json:"company_name"`
 	Name        string   `json:"name"`
 	Email       string   `json:"email"`
 	Role        string   `json:"role"`

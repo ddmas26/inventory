@@ -39,7 +39,13 @@ type rolePermissionRequest struct {
 
 // CreateRole handles POST /api/roles
 func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.create") {
+	claims, ok := h.authorize(w, r, "roles.create")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -49,7 +55,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.RoleSvc.CreateRole(req.Name, req.Description)
+	role, err := h.RoleSvc.CreateRole(cid, req.Name, req.Description)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -60,7 +66,13 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 // GetRole handles GET /api/roles/{id}
 func (h *Handler) GetRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.read") {
+	claims, ok := h.authorize(w, r, "roles.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -70,7 +82,7 @@ func (h *Handler) GetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.RoleSvc.GetByID(id)
+	role, err := h.RoleSvc.GetByID(cid, id)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "role not found")
@@ -81,7 +93,7 @@ func (h *Handler) GetRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Map to response with permissions
-	userCount, err := h.Repo.GetUserCountByRoleID(role.ID)
+	userCount, err := h.Repo.GetUserCountByRoleID(cid, role.ID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to get user count")
 		return
@@ -112,11 +124,17 @@ func (h *Handler) GetRole(w http.ResponseWriter, r *http.Request) {
 
 // ListRoles handles GET /api/roles
 func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.read") {
+	claims, ok := h.authorize(w, r, "roles.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
-	roles, err := h.RoleSvc.List()
+	roles, err := h.RoleSvc.List(cid)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list roles")
 		return
@@ -129,7 +147,7 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	// Map to response with permissions and user count
 	resp := make([]dtos.RoleWithPermissionsResponse, 0, len(roles))
 	for _, role := range roles {
-		userCount, _ := h.Repo.GetUserCountByRoleID(role.ID)
+		userCount, _ := h.Repo.GetUserCountByRoleID(cid, role.ID)
 
 		r := dtos.RoleWithPermissionsResponse{
 			ID:          role.ID,
@@ -158,7 +176,13 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRole handles PUT /api/roles/{id}
 func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.edit") {
+	claims, ok := h.authorize(w, r, "roles.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -180,7 +204,7 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 	}
 
-	if err := h.RoleSvc.Update(role); err != nil {
+	if err := h.RoleSvc.Update(cid, role); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "role not found")
 			return
@@ -189,14 +213,14 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.RoleSvc.GetByID(id)
+	updated, err := h.RoleSvc.GetByID(cid, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to get updated role")
 		return
 	}
 
 	// Map to response with permissions
-	userCount, err := h.Repo.GetUserCountByRoleID(updated.ID)
+	userCount, err := h.Repo.GetUserCountByRoleID(cid, updated.ID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to get user count")
 		return
@@ -227,7 +251,13 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 // DeleteRole handles DELETE /api/roles/{id}
 func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.delete") {
+	claims, ok := h.authorize(w, r, "roles.delete")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -237,7 +267,7 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.RoleSvc.Delete(id); err != nil {
+	if err := h.RoleSvc.Delete(cid, id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "role not found")
 			return
@@ -251,7 +281,13 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 
 // AddPermissionToRole handles POST /api/roles/{id}/permissions
 func (h *Handler) AddPermissionToRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.edit") {
+	claims, ok := h.authorize(w, r, "roles.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -267,7 +303,7 @@ func (h *Handler) AddPermissionToRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.RoleSvc.AddPermissionToRole(roleID, req.PermissionID)
+	role, err := h.RoleSvc.AddPermissionToRole(cid, roleID, req.PermissionID)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "role or permission not found")
@@ -302,7 +338,13 @@ func (h *Handler) AddPermissionToRole(w http.ResponseWriter, r *http.Request) {
 
 // RemovePermissionFromRole handles DELETE /api/roles/{id}/permissions/{permissionId}
 func (h *Handler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "roles.edit") {
+	claims, ok := h.authorize(w, r, "roles.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -318,7 +360,7 @@ func (h *Handler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	role, err := h.RoleSvc.RemovePermissionFromRole(roleID, permID)
+	role, err := h.RoleSvc.RemovePermissionFromRole(cid, roleID, permID)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "role or permission not found")

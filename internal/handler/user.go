@@ -26,7 +26,13 @@ type updateUserRequest struct {
 
 // CreateUser handles POST /api/users
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.create") {
+	claims, ok := h.authorize(w, r, "users.create")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -46,7 +52,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		roleID = &parsed
 	}
 
-	created, err := h.UserSvc.CreateUser(req.Name, req.Email, req.Password, roleID)
+	created, err := h.UserSvc.CreateUser(cid, req.Name, req.Email, req.Password, roleID)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -57,7 +63,13 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 // GetUser handles GET /api/users/{id}
 func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.read") {
+	claims, ok := h.authorize(w, r, "users.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -67,7 +79,7 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.UserSvc.GetByID(id)
+	user, err := h.UserSvc.GetByID(cid, id)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
@@ -82,7 +94,13 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 // ListUsers handles GET /api/users
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.read") {
+	claims, ok := h.authorize(w, r, "users.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -99,7 +117,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	offset := (pageIndex - 1) * pageSize
 	limit := pageSize
 
-	users, total, err := h.UserSvc.List(offset, limit, search)
+	users, total, err := h.UserSvc.List(cid, offset, limit, search)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list users")
 		return
@@ -119,7 +137,13 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 // UpdateUser handles PUT /api/users/{id}
 func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.edit") {
+	claims, ok := h.authorize(w, r, "users.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -136,7 +160,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch existing user to preserve password if not provided
-	existing, err := h.UserSvc.GetByID(id)
+	existing, err := h.UserSvc.GetByID(cid, id)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
@@ -169,7 +193,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		RoleID:   roleID,
 	}
 
-	if err := h.UserSvc.Update(user); err != nil {
+	if err := h.UserSvc.Update(cid, user); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
@@ -178,7 +202,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.UserSvc.GetByID(id)
+	updated, err := h.UserSvc.GetByID(cid, id)
 	if err != nil {
 		respond(w, http.StatusOK, user)
 		return
@@ -189,7 +213,13 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 // DeleteUser handles DELETE /api/users/{id}
 func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.delete") {
+	claims, ok := h.authorize(w, r, "users.delete")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -199,7 +229,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.UserSvc.Delete(id); err != nil {
+	if err := h.UserSvc.Delete(cid, id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
@@ -213,7 +243,13 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 // ActivateUser handles PATCH /api/users/{id}/activate
 func (h *Handler) ActivateUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.edit") {
+	claims, ok := h.authorize(w, r, "users.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -223,7 +259,7 @@ func (h *Handler) ActivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.UserSvc.ActivateUser(id); err != nil {
+	if err := h.UserSvc.ActivateUser(cid, id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
@@ -237,7 +273,13 @@ func (h *Handler) ActivateUser(w http.ResponseWriter, r *http.Request) {
 
 // DeactivateUser handles PATCH /api/users/{id}/deactivate
 func (h *Handler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "users.edit") {
+	claims, ok := h.authorize(w, r, "users.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -247,7 +289,7 @@ func (h *Handler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.UserSvc.DeactivateUser(id); err != nil {
+	if err := h.UserSvc.DeactivateUser(cid, id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return

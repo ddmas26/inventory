@@ -10,6 +10,7 @@ import (
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/service"
 	"github.com/ddmas26/inventory/internal/storage"
+	"github.com/google/uuid"
 )
 
 // Handler holds services and provides common HTTP helpers.
@@ -116,6 +117,31 @@ func (h *Handler) requirePermission(w http.ResponseWriter, r *http.Request, perm
 
 	respondError(w, http.StatusForbidden, "insufficient permissions")
 	return false
+}
+
+// authorize verifies the session and that the caller holds the given permission.
+// On success it returns the session claims, which carry the caller's company ID
+// so every tenant-scoped query can be filtered by it.
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, permissionCode string) (*auth.SessionClaims, bool) {
+	claims, err := h.sessionFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, err.Error())
+		return nil, false
+	}
+
+	for _, p := range claims.Permissions {
+		if p == permissionCode {
+			return claims, true
+		}
+	}
+
+	respondError(w, http.StatusForbidden, "insufficient permissions")
+	return nil, false
+}
+
+// companyID parses the caller's company UUID from session claims.
+func companyID(claims *auth.SessionClaims) (uuid.UUID, error) {
+	return uuid.Parse(claims.CompanyID)
 }
 
 // requireAuth checks that the request carries a valid, non-expired session.

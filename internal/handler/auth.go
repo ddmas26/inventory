@@ -50,6 +50,8 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 	respond(w, http.StatusOK, dtos.ClaimsResponse{
 		UserID:      claims.UserID,
+		CompanyID:   claims.CompanyID,
+		CompanyName: claims.CompanyName,
 		Name:        claims.Name,
 		Email:       claims.Email,
 		Role:        claims.Role,

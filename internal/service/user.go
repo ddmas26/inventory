@@ -18,7 +18,7 @@ func NewUserService(repo *database.Repository) *UserService {
 	return &UserService{repo: repo}
 }
 
-func (s *UserService) CreateUser(name, email, password string, roleID *uuid.UUID) (*dtos.UserResponse, error) {
+func (s *UserService) CreateUser(companyID uuid.UUID, name, email, password string, roleID *uuid.UUID) (*dtos.UserResponse, error) {
 	if name == "" {
 		return nil, errors.New("user name is required")
 	}
@@ -29,10 +29,17 @@ func (s *UserService) CreateUser(name, email, password string, roleID *uuid.UUID
 		return nil, errors.New("password must be at least 8 characters")
 	}
 
-	// Check if email already exists
+	// Check if email already exists (emails are globally unique)
 	existing, _ := s.repo.GetUserByEmail(email)
 	if existing != nil {
 		return nil, errors.New("email already registered")
+	}
+
+	// A role can only be assigned from within the caller's company.
+	if roleID != nil {
+		if _, err := s.repo.GetRoleByID(companyID, *roleID); err != nil {
+			return nil, errors.New("role not found")
+		}
 	}
 
 	// Hash the password
@@ -42,11 +49,12 @@ func (s *UserService) CreateUser(name, email, password string, roleID *uuid.UUID
 	}
 
 	user := &database.User{
-		Name:     name,
-		Email:    email,
-		Password: string(hashed),
-		RoleID:   roleID,
-		IsActive: true,
+		CompanyID: companyID,
+		Name:      name,
+		Email:     email,
+		Password:  string(hashed),
+		RoleID:    roleID,
+		IsActive:  true,
 	}
 
 	if err := s.repo.CreateUser(user); err != nil {
@@ -55,6 +63,7 @@ func (s *UserService) CreateUser(name, email, password string, roleID *uuid.UUID
 
 	return &dtos.UserResponse{
 		ID:        user.ID,
+		CompanyID: user.CompanyID,
 		Name:      user.Name,
 		Email:     user.Email,
 		IsActive:  user.IsActive,
@@ -64,36 +73,44 @@ func (s *UserService) CreateUser(name, email, password string, roleID *uuid.UUID
 	}, nil
 }
 
-func (s *UserService) GetByID(id uuid.UUID) (*database.User, error) {
+func (s *UserService) GetByID(companyID, id uuid.UUID) (*database.User, error) {
 	user, err := s.repo.GetUserByID(id)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
+	if user.CompanyID != companyID {
+		return nil, fmt.Errorf("get user: %w", database.ErrNotFound)
+	}
 	return user, nil
 }
 
-func (s *UserService) List(offset, limit int, search string) ([]dtos.UserDto, int64, error) {
-	return s.repo.ListUsers(offset, limit, search)
+func (s *UserService) List(companyID uuid.UUID, offset, limit int, search string) ([]dtos.UserDto, int64, error) {
+	return s.repo.ListUsers(companyID, offset, limit, search)
 }
 
-func (s *UserService) Update(user *database.User) error {
+func (s *UserService) Update(companyID uuid.UUID, user *database.User) error {
 	if user.Name == "" {
 		return errors.New("user name is required")
 	}
 	if user.Email == "" {
 		return errors.New("email is required")
 	}
-	return s.repo.UpdateUser(user)
+	if user.RoleID != nil {
+		if _, err := s.repo.GetRoleByID(companyID, *user.RoleID); err != nil {
+			return errors.New("role not found")
+		}
+	}
+	return s.repo.UpdateUser(companyID, user)
 }
 
-func (s *UserService) Delete(id uuid.UUID) error {
-	return s.repo.DeleteUser(id)
+func (s *UserService) Delete(companyID, id uuid.UUID) error {
+	return s.repo.DeleteUser(companyID, id)
 }
 
-func (s *UserService) ActivateUser(id uuid.UUID) error {
-	return s.repo.SetUserActiveStatus(id, true)
+func (s *UserService) ActivateUser(companyID, id uuid.UUID) error {
+	return s.repo.SetUserActiveStatus(companyID, id, true)
 }
 
-func (s *UserService) DeactivateUser(id uuid.UUID) error {
-	return s.repo.SetUserActiveStatus(id, false)
+func (s *UserService) DeactivateUser(companyID, id uuid.UUID) error {
+	return s.repo.SetUserActiveStatus(companyID, id, false)
 }

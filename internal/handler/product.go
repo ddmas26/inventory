@@ -28,7 +28,13 @@ type updateProductRequest struct {
 
 // CreateProduct handles POST /api/products
 func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "products.create") {
+	claims, ok := h.authorize(w, r, "products.create")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -38,7 +44,7 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.ProductSvc.AddProduct(req.Name, req.Description, req.Images, req.Price, req.LowStockThreshold)
+	created, err := h.ProductSvc.AddProduct(cid, req.Name, req.Description, req.Images, req.Price, req.LowStockThreshold)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -49,7 +55,13 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 
 // GetProduct handles GET /api/products/{id}
 func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "products.read") {
+	claims, ok := h.authorize(w, r, "products.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -59,7 +71,7 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.ProductSvc.GetByID(id)
+	product, err := h.ProductSvc.GetByID(cid, id)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "product not found")
@@ -74,7 +86,13 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 
 // ListProducts handles GET /api/products
 func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "products.read") {
+	claims, ok := h.authorize(w, r, "products.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -89,7 +107,7 @@ func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	offset := (pageIndex - 1) * pageSize
 	limit := pageSize
 
-	products, total, err := h.ProductSvc.List(offset, limit)
+	products, total, err := h.ProductSvc.List(cid, offset, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list products")
 		return
@@ -109,7 +127,13 @@ func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProduct handles PUT /api/products/{id}
 func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "products.edit") {
+	claims, ok := h.authorize(w, r, "products.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -133,7 +157,7 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		LowStockThreshold: req.LowStockThreshold,
 	}
 
-	if err := h.ProductSvc.Update(product, req.Images); err != nil {
+	if err := h.ProductSvc.Update(cid, product, req.Images); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "product not found")
 			return
@@ -142,7 +166,7 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.ProductSvc.GetByID(id)
+	updated, err := h.ProductSvc.GetByID(cid, id)
 	if err != nil {
 		respond(w, http.StatusOK, product)
 		return
@@ -153,7 +177,13 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 
 // DeleteProduct handles DELETE /api/products/{id}
 func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "products.delete") {
+	claims, ok := h.authorize(w, r, "products.delete")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -163,7 +193,7 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.ProductSvc.Delete(id); err != nil {
+	if err := h.ProductSvc.Delete(cid, id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "product not found")
 			return

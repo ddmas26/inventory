@@ -1,10 +1,12 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -68,14 +70,15 @@ func getAdminCredentials() (email, password string) {
 	return
 }
 
-// Seed creates the default Super Admin role with all permissions
-// and an admin user if none exists yet.
+// Seed creates the default company, a per-company Super Admin role holding every
+// permission, and an admin user, then backfills any pre-existing single-tenant
+// rows into the default company. Every step is idempotent.
 func Seed(db *gorm.DB) error {
 	log.Println("Seeding database...")
 
 	repo := NewRepository(db)
 
-	// ── 1. Create all permissions if they don't exist ─────────
+	// ── 1. Create all permissions if they don't exist (global) ─
 	permMap := make(map[string]*Permission)
 	for _, p := range defaultPermissions {
 		existing, err := repo.GetPermissionByCode(p.Code)
@@ -96,11 +99,23 @@ func Seed(db *gorm.DB) error {
 		}
 	}
 
-	// ── 2. Create "Super Admin" role with all permissions ────
-	superAdminRole, err := repo.GetRoleByName("Super Admin")
+	// ── 2. Ensure a default company exists ───────────────────
+	company, err := ensureDefaultCompany(repo)
+	if err != nil {
+		return fmt.Errorf("seed: ensure default company: %w", err)
+	}
+
+	// ── 3. Backfill pre-existing rows into the default company ─
+	if err := backfillCompanyID(db, company.ID); err != nil {
+		return err
+	}
+
+	// ── 4. Create the company's "Super Admin" role with all permissions ─
+	superAdminRole, err := repo.GetRoleByName(company.ID, SuperAdminRoleName)
 	if err != nil {
 		role := &Role{
-			Name:        "Super Admin",
+			CompanyID:   company.ID,
+			Name:        SuperAdminRoleName,
 			Description: "Full system access with all permissions",
 		}
 		if err := repo.CreateRole(role); err != nil {
@@ -111,7 +126,7 @@ func Seed(db *gorm.DB) error {
 
 		// Attach all permissions to the new role
 		for _, p := range permMap {
-			if err := repo.AddPermissionToRole(superAdminRole.ID, p.ID); err != nil {
+			if err := repo.AddPermissionToRole(company.ID, superAdminRole.ID, p.ID); err != nil {
 				return fmt.Errorf("seed: add permission %s to super admin: %w", p.Code, err)
 			}
 		}
@@ -127,7 +142,7 @@ func Seed(db *gorm.DB) error {
 				}
 			}
 			if !alreadyHas {
-				if err := repo.AddPermissionToRole(superAdminRole.ID, p.ID); err != nil {
+				if err := repo.AddPermissionToRole(company.ID, superAdminRole.ID, p.ID); err != nil {
 					return fmt.Errorf("seed: add permission %s to super admin: %w", p.Code, err)
 				}
 				log.Printf("  ✓ Synced permission to Super Admin: %s", p.Code)
@@ -135,21 +150,22 @@ func Seed(db *gorm.DB) error {
 		}
 	}
 
-	// ── 3. Create admin user if not exists ───────────────────
+	// ── 5. Create the admin (root) user if not exists ────────
 	adminEmail, adminPassword := getAdminCredentials()
-	_, err = repo.GetUserByEmail(adminEmail)
-	if err != nil {
+	existingAdmin, _ := repo.GetUserByEmail(adminEmail)
+	if existingAdmin == nil {
 		hashed, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 		if err != nil {
 			return fmt.Errorf("seed: hash admin password: %w", err)
 		}
 
 		adminUser := &User{
-			Name:     "Admin",
-			Email:    adminEmail,
-			Password: string(hashed),
-			RoleID:   &superAdminRole.ID,
-			IsActive: true,
+			CompanyID: company.ID,
+			Name:      "Admin",
+			Email:     adminEmail,
+			Password:  string(hashed),
+			RoleID:    &superAdminRole.ID,
+			IsActive:  true,
 		}
 		if err := repo.CreateUser(adminUser); err != nil {
 			return fmt.Errorf("seed: create admin user: %w", err)
@@ -160,5 +176,46 @@ func Seed(db *gorm.DB) error {
 	}
 
 	log.Println("Seeding complete.")
+	return nil
+}
+
+// defaultCompanyName returns the name used for the company that adopts existing
+// data during the single-tenant → multi-tenant migration.
+func defaultCompanyName() string {
+	if name := os.Getenv("DEFAULT_COMPANY_NAME"); name != "" {
+		return name
+	}
+	return "Default Company"
+}
+
+// ensureDefaultCompany returns the first company, creating one when the database
+// has none yet (fresh install or the first run after the multi-tenant upgrade).
+func ensureDefaultCompany(repo *Repository) (*Company, error) {
+	var company Company
+	err := repo.db.First(&company).Error
+	if err == nil {
+		return &company, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	company = Company{Name: defaultCompanyName(), Slug: "default", IsActive: true}
+	if err := repo.CreateCompany(&company); err != nil {
+		return nil, err
+	}
+	log.Printf("  ✓ Created default company: %s", company.Name)
+	return &company, nil
+}
+
+// backfillCompanyID assigns any pre-existing, unscoped rows to the given company
+// so data created before the multi-tenant change keeps working.
+func backfillCompanyID(db *gorm.DB, companyID uuid.UUID) error {
+	tables := []string{"products", "inventories", "stock", "users", "roles"}
+	for _, table := range tables {
+		if err := db.Exec("UPDATE "+table+" SET company_id = ? WHERE company_id IS NULL", companyID).Error; err != nil {
+			return fmt.Errorf("seed: backfill %s.company_id: %w", table, err)
+		}
+	}
 	return nil
 }

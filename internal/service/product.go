@@ -73,6 +73,7 @@ func (s *ProductService) toProductResponse(p *database.Product) *dtos.ProductRes
 
 	resp := &dtos.ProductResponse{
 		ID:                p.ID,
+		CompanyID:         p.CompanyID,
 		Name:              p.Name,
 		Description:       p.Description,
 		ImageURL:          p.ImageURL,
@@ -96,7 +97,7 @@ func (s *ProductService) toProductResponse(p *database.Product) *dtos.ProductRes
 	return resp
 }
 
-func (s *ProductService) AddProduct(name, description string, images []dtos.ProductImageInput, price float64, lowStockThreshold int) (*dtos.ProductResponse, error) {
+func (s *ProductService) AddProduct(companyID uuid.UUID, name, description string, images []dtos.ProductImageInput, price float64, lowStockThreshold int) (*dtos.ProductResponse, error) {
 	if name == "" {
 		return nil, errors.New("product name is required")
 	}
@@ -116,6 +117,7 @@ func (s *ProductService) AddProduct(name, description string, images []dtos.Prod
 	}
 
 	product := database.Product{
+		CompanyID:         companyID,
 		Name:              name,
 		Description:       description,
 		Price:             price,
@@ -130,7 +132,7 @@ func (s *ProductService) AddProduct(name, description string, images []dtos.Prod
 		return nil, fmt.Errorf("save product images: %w", err)
 	}
 
-	created, err := s.repo.GetProductByID(product.ID)
+	created, err := s.repo.GetProductByID(companyID, product.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load created product: %w", err)
 	}
@@ -138,8 +140,8 @@ func (s *ProductService) AddProduct(name, description string, images []dtos.Prod
 	return s.toProductResponse(created), nil
 }
 
-func (s *ProductService) GetByID(id uuid.UUID) (*database.Product, error) {
-	product, err := s.repo.GetProductByID(id)
+func (s *ProductService) GetByID(companyID, id uuid.UUID) (*database.Product, error) {
+	product, err := s.repo.GetProductByID(companyID, id)
 	if err != nil {
 		return nil, fmt.Errorf("get product: %w", err)
 	}
@@ -147,8 +149,8 @@ func (s *ProductService) GetByID(id uuid.UUID) (*database.Product, error) {
 	return product, nil
 }
 
-func (s *ProductService) List(offset, limit int) ([]database.Product, int64, error) {
-	products, total, err := s.repo.ListProducts(offset, limit)
+func (s *ProductService) List(companyID uuid.UUID, offset, limit int) ([]database.Product, int64, error) {
+	products, total, err := s.repo.ListProducts(companyID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -161,7 +163,7 @@ func (s *ProductService) List(offset, limit int) ([]database.Product, int64, err
 }
 
 // Update replaces the product's mutable fields and its full set of images.
-func (s *ProductService) Update(product *database.Product, images []dtos.ProductImageInput) error {
+func (s *ProductService) Update(companyID uuid.UUID, product *database.Product, images []dtos.ProductImageInput) error {
 	if product.Name == "" {
 		return errors.New("product name is required")
 	}
@@ -174,13 +176,13 @@ func (s *ProductService) Update(product *database.Product, images []dtos.Product
 		return err
 	}
 
-	if err := s.repo.UpdateProduct(product); err != nil {
+	if err := s.repo.UpdateProduct(companyID, product); err != nil {
 		return err
 	}
 
 	return s.repo.ReplaceProductImages(product.ID, imgs)
 }
 
-func (s *ProductService) Delete(id uuid.UUID) error {
-	return s.repo.DeleteProduct(id)
+func (s *ProductService) Delete(companyID, id uuid.UUID) error {
+	return s.repo.DeleteProduct(companyID, id)
 }

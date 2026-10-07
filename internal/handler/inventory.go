@@ -25,7 +25,13 @@ type updateInventoryRequest struct {
 
 // CreateInventory handles POST /api/inventories
 func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "inventories.create") {
+	claims, ok := h.authorize(w, r, "inventories.create")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -35,7 +41,7 @@ func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inv, err := h.InventorySvc.CreateInventory(req.Name, req.Address, req.Latitude, req.Longitude)
+	inv, err := h.InventorySvc.CreateInventory(cid, req.Name, req.Address, req.Latitude, req.Longitude)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -46,7 +52,13 @@ func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
 
 // GetInventory handles GET /api/inventories/{id}
 func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "inventories.read") {
+	claims, ok := h.authorize(w, r, "inventories.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -56,7 +68,7 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inventory, err := h.InventorySvc.GetByID(id)
+	inventory, err := h.InventorySvc.GetByID(cid, id)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
@@ -71,7 +83,13 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 
 // ListInventories handles GET /api/inventories
 func (h *Handler) ListInventories(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "inventories.read") {
+	claims, ok := h.authorize(w, r, "inventories.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -86,7 +104,7 @@ func (h *Handler) ListInventories(w http.ResponseWriter, r *http.Request) {
 	offset := (pageIndex - 1) * pageSize
 	limit := pageSize
 
-	inventories, total, err := h.InventorySvc.List(offset, limit)
+	inventories, total, err := h.InventorySvc.List(cid, offset, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list inventories")
 		return
@@ -106,7 +124,13 @@ func (h *Handler) ListInventories(w http.ResponseWriter, r *http.Request) {
 
 // UpdateInventory handles PUT /api/inventories/{id}
 func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "inventories.edit") {
+	claims, ok := h.authorize(w, r, "inventories.edit")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -130,7 +154,7 @@ func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
 		Longitude: req.Longitude,
 	}
 
-	if err := h.InventorySvc.Update(inventory); err != nil {
+	if err := h.InventorySvc.Update(cid, inventory); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
 			return
@@ -139,7 +163,7 @@ func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.InventorySvc.GetByID(id)
+	updated, err := h.InventorySvc.GetByID(cid, id)
 	if err != nil {
 		respond(w, http.StatusOK, inventory)
 		return
@@ -150,7 +174,13 @@ func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
 
 // DeleteInventory handles DELETE /api/inventories/{id}
 func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "inventories.delete") {
+	claims, ok := h.authorize(w, r, "inventories.delete")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
@@ -160,7 +190,7 @@ func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.InventorySvc.Delete(id); err != nil {
+	if err := h.InventorySvc.Delete(cid, id); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
 			return
@@ -173,11 +203,17 @@ func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DashboardInventory(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePermission(w, r, "dashboard.read") {
+	claims, ok := h.authorize(w, r, "dashboard.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
 		return
 	}
 
-	dashData, err := h.InventorySvc.GetDashboardData()
+	dashData, err := h.InventorySvc.GetDashboardData(cid)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "error retrieving dashboard data")
 		return

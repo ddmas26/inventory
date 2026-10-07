@@ -19,12 +19,13 @@ func NewRoleService(repo *database.Repository) *RoleService {
 
 // ── Role CRUD ──────────────────────────────────────────────────────────────
 
-func (s *RoleService) CreateRole(name, description string) (*dtos.RoleResponse, error) {
+func (s *RoleService) CreateRole(companyID uuid.UUID, name, description string) (*dtos.RoleResponse, error) {
 	if name == "" {
 		return nil, errors.New("role name is required")
 	}
 
 	role := &database.Role{
+		CompanyID:   companyID,
 		Name:        name,
 		Description: description,
 	}
@@ -42,27 +43,27 @@ func (s *RoleService) CreateRole(name, description string) (*dtos.RoleResponse, 
 	}, nil
 }
 
-func (s *RoleService) GetByID(id uuid.UUID) (*database.Role, error) {
-	role, err := s.repo.GetRoleByID(id)
+func (s *RoleService) GetByID(companyID, id uuid.UUID) (*database.Role, error) {
+	role, err := s.repo.GetRoleByID(companyID, id)
 	if err != nil {
 		return nil, fmt.Errorf("get role: %w", err)
 	}
 	return role, nil
 }
 
-func (s *RoleService) List() ([]database.Role, error) {
-	return s.repo.ListRoles()
+func (s *RoleService) List(companyID uuid.UUID) ([]database.Role, error) {
+	return s.repo.ListRoles(companyID)
 }
 
-func (s *RoleService) Update(role *database.Role) error {
+func (s *RoleService) Update(companyID uuid.UUID, role *database.Role) error {
 	if role.Name == "" {
 		return errors.New("role name is required")
 	}
-	return s.repo.UpdateRole(role)
+	return s.repo.UpdateRole(companyID, role)
 }
 
-func (s *RoleService) Delete(id uuid.UUID) error {
-	return s.repo.DeleteRole(id)
+func (s *RoleService) Delete(companyID, id uuid.UUID) error {
+	return s.repo.DeleteRole(companyID, id)
 }
 
 // ── Permission Management ──────────────────────────────────────────────────
@@ -115,16 +116,16 @@ func (s *RoleService) DeletePermission(id uuid.UUID) error {
 
 // ── Role-Permission Association ────────────────────────────────────────────
 
-func (s *RoleService) AddPermissionToRole(roleID, permissionID uuid.UUID) (*database.Role, error) {
-	if err := s.repo.AddPermissionToRole(roleID, permissionID); err != nil {
+func (s *RoleService) AddPermissionToRole(companyID, roleID, permissionID uuid.UUID) (*database.Role, error) {
+	if err := s.repo.AddPermissionToRole(companyID, roleID, permissionID); err != nil {
 		return nil, fmt.Errorf("add permission to role: %w", err)
 	}
-	return s.repo.GetRoleByID(roleID)
+	return s.repo.GetRoleByID(companyID, roleID)
 }
 
-func (s *RoleService) RemovePermissionFromRole(roleID, permissionID uuid.UUID) (*database.Role, error) {
-	if err := s.repo.RemovePermissionFromRole(roleID, permissionID); err != nil {
+func (s *RoleService) RemovePermissionFromRole(companyID, roleID, permissionID uuid.UUID) (*database.Role, error) {
+	if err := s.repo.RemovePermissionFromRole(companyID, roleID, permissionID); err != nil {
 		return nil, fmt.Errorf("remove permission from role: %w", err)
 	}
-	return s.repo.GetRoleByID(roleID)
+	return s.repo.GetRoleByID(companyID, roleID)
 }

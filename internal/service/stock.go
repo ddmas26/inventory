@@ -21,43 +21,67 @@ func NewStockService(repo *database.Repository, store *storage.Store) *StockServ
 }
 
 // AddStock adds quantity to a product at an inventory. Creates entry if missing.
-func (s *StockService) AddStock(inventoryID, productID uuid.UUID, amount int) error {
+func (s *StockService) AddStock(companyID, inventoryID, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("quantity must be positive")
 	}
-	return s.repo.AddStock(inventoryID, productID, amount)
+	if err := s.validateRefs(companyID, inventoryID, productID); err != nil {
+		return err
+	}
+	return s.repo.AddStock(companyID, inventoryID, productID, amount)
 }
 
 // DeductStock subtracts quantity. Fails if stock would go negative or entry missing.
-func (s *StockService) DeductStock(inventoryID, productID uuid.UUID, amount int) error {
+func (s *StockService) DeductStock(companyID, inventoryID, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("quantity must be positive")
 	}
-	return s.repo.DeductStock(inventoryID, productID, amount)
+	return s.repo.DeductStock(companyID, inventoryID, productID, amount)
 }
 
 // SetStock sets absolute quantity (overwrites). Fails if entry missing.
-func (s *StockService) SetStock(inventoryID, productID uuid.UUID, quantity int) error {
+func (s *StockService) SetStock(companyID, inventoryID, productID uuid.UUID, quantity int) error {
 	if quantity < 0 {
 		return errors.New("quantity cannot be negative")
 	}
-	return s.repo.SetProductStock(inventoryID, productID, quantity)
+	if err := s.validateRefs(companyID, inventoryID, productID); err != nil {
+		return err
+	}
+	return s.repo.SetProductStock(companyID, inventoryID, productID, quantity)
 }
 
 // TransferStock moves quantity from one inventory to another atomically.
-func (s *StockService) TransferStock(fromInv, toInv, productID uuid.UUID, amount int) error {
+func (s *StockService) TransferStock(companyID, fromInv, toInv, productID uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return errors.New("transfer amount must be positive")
 	}
 	if fromInv == toInv {
 		return errors.New("source and destination inventories must be different")
 	}
-	return s.repo.TransferStock(fromInv, toInv, productID, amount)
+	if err := s.validateRefs(companyID, fromInv, productID); err != nil {
+		return err
+	}
+	if err := s.validateRefs(companyID, toInv, productID); err != nil {
+		return err
+	}
+	return s.repo.TransferStock(companyID, fromInv, toInv, productID, amount)
+}
+
+// validateRefs makes sure both the inventory and the product exist inside the
+// caller's company, so a stock entry can never link another tenant's records.
+func (s *StockService) validateRefs(companyID, inventoryID, productID uuid.UUID) error {
+	if _, err := s.repo.GetInventoryByID(companyID, inventoryID); err != nil {
+		return errors.New("inventory not found")
+	}
+	if _, err := s.repo.GetProductByID(companyID, productID); err != nil {
+		return errors.New("product not found")
+	}
+	return nil
 }
 
 // GetStock retrieves a single stock entry.
-func (s *StockService) GetStock(inventoryID, productID uuid.UUID) (*database.Stock, error) {
-	stock, err := s.repo.GetStock(inventoryID, productID)
+func (s *StockService) GetStock(companyID, inventoryID, productID uuid.UUID) (*database.Stock, error) {
+	stock, err := s.repo.GetStock(companyID, inventoryID, productID)
 	if err != nil {
 		return nil, fmt.Errorf("get stock: %w", err)
 	}
@@ -79,6 +103,6 @@ func (s *StockService) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, 
 }
 
 // RemoveStock deletes a stock entry.
-func (s *StockService) RemoveStock(inventoryID, productID uuid.UUID) error {
-	return s.repo.RemoveProductFromInventory(inventoryID, productID)
+func (s *StockService) RemoveStock(companyID, inventoryID, productID uuid.UUID) error {
+	return s.repo.RemoveProductFromInventory(companyID, inventoryID, productID)
 }

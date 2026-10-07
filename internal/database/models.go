@@ -7,10 +7,32 @@ import (
 	"gorm.io/gorm"
 )
 
+// Company is a tenant. Every tenant-owned record (users, roles, inventories,
+// products and stock) belongs to exactly one company, and all access is scoped
+// to the caller's company.
+type Company struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Name      string         `gorm:"type:varchar(255);not null" json:"name"`
+	Slug      string         `gorm:"type:varchar(255);not null;uniqueIndex" json:"slug"`
+	IsActive  bool           `gorm:"not null;default:true" json:"is_active"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+// BeforeCreate hook ensures UUID is set if empty.
+func (c *Company) BeforeCreate(tx *gorm.DB) error {
+	if c.ID == uuid.Nil {
+		c.ID = uuid.New()
+	}
+	return nil
+}
+
 // Product represents a product that can be stocked in inventories.
 type Product struct {
 	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Name        string    `gorm:"type:varchar(255);not null;uniqueIndex" json:"name"`
+	CompanyID   uuid.UUID `gorm:"type:uuid;index" json:"company_id"`
+	Name        string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_products_company_name" json:"name"`
 	Description string    `gorm:"type:text" json:"description"`
 	Price       float64   `gorm:"not null;default:0" json:"price"`
 	// LowStockThreshold marks the product as low stock whenever its quantity at an
@@ -83,7 +105,8 @@ func (pi *ProductImage) BeforeCreate(tx *gorm.DB) error {
 // Inventory represents a physical storage location (warehouse, store, etc.).
 type Inventory struct {
 	ID        uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Name      string         `gorm:"type:varchar(255);not null;uniqueIndex" json:"name"`
+	CompanyID uuid.UUID      `gorm:"type:uuid;index" json:"company_id"`
+	Name      string         `gorm:"type:varchar(255);not null;uniqueIndex:idx_inventories_company_name" json:"name"`
 	Address   string         `gorm:"type:text" json:"address"`
 	Latitude  string         `gorm:"type:varchar(50)" json:"latitude"`
 	Longitude string         `gorm:"type:varchar(50)" json:"longitude"`
@@ -107,6 +130,7 @@ func (i *Inventory) BeforeCreate(tx *gorm.DB) error {
 // It is the join table linking Inventory and Product.
 type Stock struct {
 	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CompanyID   uuid.UUID `gorm:"type:uuid;index" json:"company_id"`
 	InventoryID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_inv_prod" json:"inventory_id"`
 	ProductID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_inv_prod;index" json:"product_id"`
 	Quantity    int       `gorm:"not null;default:0" json:"quantity"`
@@ -132,6 +156,7 @@ func (s *Stock) BeforeCreate(tx *gorm.DB) error {
 
 type User struct {
 	ID        uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	CompanyID uuid.UUID      `json:"company_id" gorm:"type:uuid;index"`
 	Name      string         `json:"name" gorm:"size:50;not null" validate:"required,min=2,max=50"`
 	Email     string         `json:"email" gorm:"uniqueIndex;size:255;not null" validate:"required,email"`
 	Password  string         `json:"-" gorm:"size:255;not null" validate:"required,min=8"`
@@ -150,10 +175,12 @@ func (s *User) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// Role represents a named group of permissions.
+// Role represents a named group of permissions. Roles are per-company; the
+// permission catalog they reference is global.
 type Role struct {
 	ID          uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	Name        string         `json:"name" gorm:"size:100;not null;uniqueIndex"`
+	CompanyID   uuid.UUID      `json:"company_id" gorm:"type:uuid;index"`
+	Name        string         `json:"name" gorm:"size:100;not null;uniqueIndex:idx_roles_company_name"`
 	Description string         `json:"description" gorm:"type:text"`
 	Permissions []Permission   `json:"permissions,omitempty" gorm:"many2many:role_permissions;"`
 	CreatedAt   time.Time      `json:"created_at" gorm:"autoCreateTime"`

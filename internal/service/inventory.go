@@ -19,12 +19,13 @@ func NewInventoryService(repo *database.Repository, store *storage.Store) *Inven
 	return &InventoryService{repo: repo, storage: store}
 }
 
-func (s *InventoryService) CreateInventory(name, address, latitude, longitude string) (*database.Inventory, error) {
+func (s *InventoryService) CreateInventory(companyID uuid.UUID, name, address, latitude, longitude string) (*database.Inventory, error) {
 	if name == "" {
 		return nil, errors.New("inventory name is required")
 	}
 
 	inv := &database.Inventory{
+		CompanyID: companyID,
 		Name:      name,
 		Address:   address,
 		Latitude:  latitude,
@@ -37,41 +38,41 @@ func (s *InventoryService) CreateInventory(name, address, latitude, longitude st
 	return inv, nil
 }
 
-func (s *InventoryService) GetByID(id uuid.UUID) (*database.Inventory, error) {
-	inv, err := s.repo.GetInventoryByID(id)
+func (s *InventoryService) GetByID(companyID, id uuid.UUID) (*database.Inventory, error) {
+	inv, err := s.repo.GetInventoryByID(companyID, id)
 	if err != nil {
 		return nil, fmt.Errorf("get inventory: %w", err)
 	}
 	return inv, nil
 }
 
-func (s *InventoryService) List(offset, limit int) ([]database.Inventory, int64, error) {
-	return s.repo.ListInventories(offset, limit)
+func (s *InventoryService) List(companyID uuid.UUID, offset, limit int) ([]database.Inventory, int64, error) {
+	return s.repo.ListInventories(companyID, offset, limit)
 }
 
-func (s *InventoryService) Update(inv *database.Inventory) error {
+func (s *InventoryService) Update(companyID uuid.UUID, inv *database.Inventory) error {
 	if inv.Name == "" {
 		return errors.New("inventory name is required")
 	}
-	return s.repo.UpdateInventory(inv)
+	return s.repo.UpdateInventory(companyID, inv)
 }
 
-func (s *InventoryService) Delete(id uuid.UUID) error {
-	return s.repo.DeleteInventory(id)
+func (s *InventoryService) Delete(companyID, id uuid.UUID) error {
+	return s.repo.DeleteInventory(companyID, id)
 }
 
-func (s *InventoryService) ListAll() ([]database.Inventory, error) {
-	return s.repo.ListAllInventories()
+func (s *InventoryService) ListAll(companyID uuid.UUID) ([]database.Inventory, error) {
+	return s.repo.ListAllInventories(companyID)
 }
 
 // GetDashboardData returns aggregated dashboard data including counts, low-stock items, and all inventory locations.
-func (s *InventoryService) GetDashboardData() (*dtos.InventoryDashboardDto, error) {
-	inventories, err := s.repo.ListAllInventories()
+func (s *InventoryService) GetDashboardData(companyID uuid.UUID) (*dtos.InventoryDashboardDto, error) {
+	inventories, err := s.repo.ListAllInventories(companyID)
 	if err != nil {
 		return nil, fmt.Errorf("list inventories: %w", err)
 	}
 
-	dashData, err := s.repo.GetDashboardData()
+	dashData, err := s.repo.GetDashboardData(companyID)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard data: %w", err)
 	}
