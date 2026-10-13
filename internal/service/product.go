@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/dtos"
@@ -12,6 +13,35 @@ import (
 
 // maxProductImages caps how many images a single product can carry.
 const maxProductImages = 20
+
+// Identifier limits. SKU is mandatory, barcode is optional.
+const (
+	maxSKULength     = 64
+	maxBarcodeLength = 64
+)
+
+// normalizeSKU trims and upper-cases a SKU so uniqueness is case-insensitive
+// ("mou-001" and "MOU-001" are treated as the same identifier).
+func normalizeSKU(sku string) string {
+	return strings.ToUpper(strings.TrimSpace(sku))
+}
+
+// normalizeBarcode trims a barcode and drops the spaces some scanners inject.
+func normalizeBarcode(barcode string) string {
+	return strings.ReplaceAll(strings.TrimSpace(barcode), " ", "")
+}
+
+// isUniqueViolation reports whether an error is PostgreSQL's unique-constraint
+// violation (SQLSTATE 23505). It backs up the pre-insert conflict check so that
+// a race between two requests still produces a friendly message instead of a
+// raw driver error.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key")
+}
 
 type ProductService struct {
 	repo    *database.Repository
@@ -76,6 +106,8 @@ func (s *ProductService) toProductResponse(p *database.Product) *dtos.ProductRes
 		CompanyID:         p.CompanyID,
 		Name:              p.Name,
 		Description:       p.Description,
+		SKU:               p.SKU,
+		Barcode:           p.Barcode,
 		ImageURL:          p.ImageURL,
 		Price:             p.Price,
 		LowStockThreshold: p.LowStockThreshold,
@@ -97,7 +129,23 @@ func (s *ProductService) toProductResponse(p *database.Product) *dtos.ProductRes
 	return resp
 }
 
-func (s *ProductService) AddProduct(companyID uuid.UUID, name, description string, images []dtos.ProductImageInput, price float64, lowStockThreshold int) (*dtos.ProductResponse, error) {
+// checkIdentifierConflict fails when the SKU or barcode is already used by a
+// different product inside the same company.
+func (s *ProductService) checkIdentifierConflict(companyID uuid.UUID, sku, barcode string, excludeID uuid.UUID) error {
+	conflict, err := s.repo.ProductIdentifierConflict(companyID, sku, barcode, excludeID)
+	if err != nil {
+		return err
+	}
+	switch conflict {
+	case "sku":
+		return fmt.Errorf("sku %q is already used by another product", sku)
+	case "barcode":
+		return fmt.Errorf("barcode %q is already used by another product", barcode)
+	}
+	return nil
+}
+
+func (s *ProductService) AddProduct(companyID uuid.UUID, name, description, sku, barcode string, images []dtos.ProductImageInput, price float64, lowStockThreshold int) (*dtos.ProductResponse, error) {
 	if name == "" {
 		return nil, errors.New("product name is required")
 	}
@@ -111,6 +159,21 @@ func (s *ProductService) AddProduct(companyID uuid.UUID, name, description strin
 		return nil, errors.New("low stock threshold cannot be negative")
 	}
 
+	sku = normalizeSKU(sku)
+	barcode = normalizeBarcode(barcode)
+	if sku == "" {
+		return nil, errors.New("product sku is required")
+	}
+	if len(sku) > maxSKULength {
+		return nil, fmt.Errorf("product sku must be %d characters or less", maxSKULength)
+	}
+	if len(barcode) > maxBarcodeLength {
+		return nil, fmt.Errorf("product barcode must be %d characters or less", maxBarcodeLength)
+	}
+	if err := s.checkIdentifierConflict(companyID, sku, barcode, uuid.Nil); err != nil {
+		return nil, err
+	}
+
 	imgs, err := s.normalizeImages(images)
 	if err != nil {
 		return nil, err
@@ -119,12 +182,17 @@ func (s *ProductService) AddProduct(companyID uuid.UUID, name, description strin
 	product := database.Product{
 		CompanyID:         companyID,
 		Name:              name,
+		SKU:               sku,
+		Barcode:           barcode,
 		Description:       description,
 		Price:             price,
 		LowStockThreshold: lowStockThreshold,
 	}
 
 	if err := s.repo.CreateProduct(&product); err != nil {
+		if isUniqueViolation(err) {
+			return nil, errors.New("a product with the same name, sku or barcode already exists in this company")
+		}
 		return nil, fmt.Errorf("create product: %w", err)
 	}
 
@@ -149,8 +217,8 @@ func (s *ProductService) GetByID(companyID, id uuid.UUID) (*database.Product, er
 	return product, nil
 }
 
-func (s *ProductService) List(companyID uuid.UUID, offset, limit int) ([]database.Product, int64, error) {
-	products, total, err := s.repo.ListProducts(companyID, offset, limit)
+func (s *ProductService) List(companyID uuid.UUID, offset, limit int, search string) ([]database.Product, int64, error) {
+	products, total, err := s.repo.ListProducts(companyID, offset, limit, strings.TrimSpace(search))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -162,6 +230,34 @@ func (s *ProductService) List(companyID uuid.UUID, offset, limit int) ([]databas
 	return products, total, nil
 }
 
+// GetByCode looks a product up by SKU first, then by barcode. It backs the
+// barcode-scanner endpoint: a scanner emits whatever the label encodes, which
+// in practice is either our own SKU or the manufacturer's barcode.
+func (s *ProductService) GetByCode(companyID uuid.UUID, code string) (*database.Product, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil, errors.New("code is required")
+	}
+
+	product, err := s.repo.GetProductBySKU(companyID, normalizeSKU(code))
+	if err != nil {
+		if !errors.Is(err, database.ErrNotFound) {
+			return nil, fmt.Errorf("lookup product by sku: %w", err)
+		}
+
+		product, err = s.repo.GetProductByBarcode(companyID, normalizeBarcode(code))
+		if err != nil {
+			if errors.Is(err, database.ErrNotFound) {
+				return nil, fmt.Errorf("product %q: %w", code, database.ErrNotFound)
+			}
+			return nil, fmt.Errorf("lookup product by barcode: %w", err)
+		}
+	}
+
+	s.resolveImageRefs(product)
+	return product, nil
+}
+
 // Update replaces the product's mutable fields and its full set of images.
 func (s *ProductService) Update(companyID uuid.UUID, product *database.Product, images []dtos.ProductImageInput) error {
 	if product.Name == "" {
@@ -171,12 +267,37 @@ func (s *ProductService) Update(companyID uuid.UUID, product *database.Product, 
 		return errors.New("low stock threshold cannot be negative")
 	}
 
+	product.SKU = normalizeSKU(product.SKU)
+	product.Barcode = normalizeBarcode(product.Barcode)
+
+	// A SKU is mandatory, but a client that predates SKUs may omit it: keep the
+	// identifier already stored on the product rather than clearing it.
+	if product.SKU == "" {
+		existing, err := s.repo.GetProductByID(companyID, product.ID)
+		if err != nil {
+			return err
+		}
+		product.SKU = existing.SKU
+	}
+	if len(product.SKU) > maxSKULength {
+		return fmt.Errorf("product sku must be %d characters or less", maxSKULength)
+	}
+	if len(product.Barcode) > maxBarcodeLength {
+		return fmt.Errorf("product barcode must be %d characters or less", maxBarcodeLength)
+	}
+	if err := s.checkIdentifierConflict(companyID, product.SKU, product.Barcode, product.ID); err != nil {
+		return err
+	}
+
 	imgs, err := s.normalizeImages(images)
 	if err != nil {
 		return err
 	}
 
 	if err := s.repo.UpdateProduct(companyID, product); err != nil {
+		if isUniqueViolation(err) {
+			return errors.New("a product with the same name, sku or barcode already exists in this company")
+		}
 		return err
 	}
 

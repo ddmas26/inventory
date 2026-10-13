@@ -37,14 +37,26 @@ The low stock threshold is currently hardcoded (`quantity < 5`). Products need a
 
 ## 🟠 Medium Priority
 
-### 4. Barcode / SKU Support
-No barcode or SKU field exists on products, preventing barcode/RFID scanning integration.
+### 4. ✅ Barcode / SKU Support (implemented)
+Products carry a required `sku` and an optional `barcode`, both unique **within a
+company** (not globally) — two tenants may legitimately share an identifier.
 
-**Required:**
-- `sku` / `barcode` column on the Product model (unique)
-- Backend endpoint to look up a product by barcode
-- Frontend barcode input field on product forms
-- Optional: scan input field on Stock page for quick add/deduct by scanning
+**Shipped:**
+- `sku` / `barcode` columns on the Product model, enforced by partial unique
+  indexes over `deleted_at IS NULL`, so a soft-deleted product does not permanently
+  reserve an identifier and an omitted barcode never collides.
+- Products created before SKUs existed were backfilled with `LEGACY-<id>` SKUs
+  during migration.
+- `GET /api/products/scan?code=…` — resolves a scanned code (SKU first, then
+  barcode) to a single product.
+- `GET /api/products?search=…` — matches name, SKU or barcode; the Stock list
+  search matches them too.
+- Frontend: SKU/barcode columns, product form fields and details view; debounced
+  search box; scan input on the Products page and on the Stock page (the latter
+  opens the pre-filled "Add Stock" dialog).
+
+**Still open:** camera-based scanning. A hardware barcode scanner works today —
+those emit keystrokes ending in Enter, which the scan inputs already handle.
 
 ### 5. Stock Aging & Reporting
 The dashboard only shows basic counts. No inventory aging or advanced reporting exists.
@@ -174,7 +186,7 @@ Currently using GORM AutoMigrate. For production, versioned migrations would be 
 | User Access Control | ❌ Missing | Auth system (#1) |
 | Search & Filters | ⚠️ Partial | Products & Inventories (#2) |
 | Low Stock Alerts | ⚠️ Hardcoded | Configurable thresholds (#3) |
-| Barcode/SKU | ❌ Missing | Barcode support (#4) |
+| Barcode/SKU | ✅ Complete | Camera scanning (#4) |
 | Batch/Serial Tracking | ❌ Missing | Lot tracking (#6) |
 | Order Management | ❌ Missing | PO/SO system (#8) |
 | Automated Reordering | ❌ Missing | Notifications (#9) |

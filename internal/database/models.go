@@ -55,6 +55,14 @@ type Product struct {
 	Name        string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_products_company_name" json:"name"`
 	Description string    `gorm:"type:text" json:"description"`
 	Price       float64   `gorm:"not null;default:0" json:"price"`
+	// SKU is the stock keeping unit — a short human-readable identifier for the
+	// product (e.g. "MOU-001"). Uniqueness is scoped to the company, not global:
+	// two tenants may legitimately use the same SKU for different products.
+	// Enforced by the partial unique index idx_products_company_sku (see Migrate).
+	SKU string `gorm:"type:varchar(64);index" json:"sku"`
+	// Barcode is an optional EAN/UPC code. When present it is unique within the
+	// company, enforced by the partial unique index idx_products_company_barcode.
+	Barcode string `gorm:"type:varchar(64);index" json:"barcode"`
 	// LowStockThreshold marks the product as low stock whenever its quantity at an
 	// inventory drops below this value. Zero disables low-stock monitoring.
 	LowStockThreshold int            `gorm:"not null;default:50" json:"low_stock_threshold"`

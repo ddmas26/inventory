@@ -7,10 +7,14 @@ import (
 )
 
 type ProductResponse struct {
-	ID                uuid.UUID         `json:"id"`
-	CompanyID         uuid.UUID         `json:"company_id"`
-	Name              string            `json:"name"`
-	Description       string            `json:"description"`
+	ID          uuid.UUID `json:"id"`
+	CompanyID   uuid.UUID `json:"company_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	// SKU is unique within the company; Barcode is optional and also unique
+	// within the company when set.
+	SKU               string            `json:"sku"`
+	Barcode           string            `json:"barcode"`
 	ImageURL          string            `json:"image_url"`
 	Images            []ProductImageDto `json:"images"`
 	Price             float64           `json:"price"`

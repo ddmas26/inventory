@@ -12,6 +12,8 @@ import (
 
 type createProductRequest struct {
 	Name              string                   `json:"name"`
+	SKU               string                   `json:"sku"`
+	Barcode           string                   `json:"barcode"`
 	Description       string                   `json:"description"`
 	Price             float64                  `json:"price"`
 	LowStockThreshold int                      `json:"low_stock_threshold"`
@@ -20,6 +22,8 @@ type createProductRequest struct {
 
 type updateProductRequest struct {
 	Name              string                   `json:"name"`
+	SKU               string                   `json:"sku"`
+	Barcode           string                   `json:"barcode"`
 	Description       string                   `json:"description"`
 	Price             float64                  `json:"price"`
 	LowStockThreshold int                      `json:"low_stock_threshold"`
@@ -44,7 +48,7 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.ProductSvc.AddProduct(cid, req.Name, req.Description, req.Images, req.Price, req.LowStockThreshold)
+	created, err := h.ProductSvc.AddProduct(cid, req.Name, req.Description, req.SKU, req.Barcode, req.Images, req.Price, req.LowStockThreshold)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -84,6 +88,39 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, product)
 }
 
+// ScanProduct handles GET /api/products/scan?code={sku-or-barcode}
+// It resolves a scanned code (SKU or barcode) to a single product so the
+// frontend can act on whatever a barcode scanner emits.
+func (h *Handler) ScanProduct(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.authorize(w, r, "products.read")
+	if !ok {
+		return
+	}
+	cid, err := companyID(claims)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "invalid company in session")
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		respondError(w, http.StatusBadRequest, "code is required")
+		return
+	}
+
+	product, err := h.ProductSvc.GetByCode(cid, code)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "no product matches that sku or barcode")
+			return
+		}
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respond(w, http.StatusOK, product)
+}
+
 // ListProducts handles GET /api/products
 func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	claims, ok := h.authorize(w, r, "products.read")
@@ -107,7 +144,7 @@ func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	offset := (pageIndex - 1) * pageSize
 	limit := pageSize
 
-	products, total, err := h.ProductSvc.List(cid, offset, limit)
+	products, total, err := h.ProductSvc.List(cid, offset, limit, r.URL.Query().Get("search"))
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to list products")
 		return
@@ -152,6 +189,8 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	product := &database.Product{
 		ID:                id,
 		Name:              req.Name,
+		SKU:               req.SKU,
+		Barcode:           req.Barcode,
 		Description:       req.Description,
 		Price:             req.Price,
 		LowStockThreshold: req.LowStockThreshold,

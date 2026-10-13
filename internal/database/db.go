@@ -80,6 +80,47 @@ func Migrate(db *gorm.DB) error {
 	if err != nil {
 		return fmt.Errorf("auto-migration failed: %w", err)
 	}
+
+	if err := migrateProductIdentifiers(db); err != nil {
+		return err
+	}
+
 	log.Println("Database migration completed")
+	return nil
+}
+
+// migrateProductIdentifiers guarantees that every product carries a SKU and
+// keeps SKU/barcode unique inside a company. Both steps are idempotent.
+//
+// The uniqueness is deliberately company-scoped: two tenants may legitimately
+// use the same SKU or barcode for different products. Partial indexes are used
+// (instead of a plain UNIQUE constraint) so that
+//   - soft-deleted products do not permanently reserve an identifier, and
+//   - an omitted (empty) barcode never collides with another omitted one.
+func migrateProductIdentifiers(db *gorm.DB) error {
+	// Backfill products that predate the SKU column with a deterministic,
+	// collision-free identifier derived from the row UUID (e.g. "LEGACY-3F9A1C7D").
+	if err := db.Exec(`
+		UPDATE products
+		SET sku = 'LEGACY-' || UPPER(SUBSTRING(REPLACE(id::text, '-', '') FROM 1 FOR 8))
+		WHERE (sku IS NULL OR sku = '') AND deleted_at IS NULL
+	`).Error; err != nil {
+		return fmt.Errorf("backfill product SKUs: %w", err)
+	}
+
+	identifiers := []struct{ index, column string }{
+		{"idx_products_company_sku", "sku"},
+		{"idx_products_company_barcode", "barcode"},
+	}
+	for _, ident := range identifiers {
+		stmt := fmt.Sprintf(
+			"CREATE UNIQUE INDEX IF NOT EXISTS %s ON products (company_id, %s) WHERE deleted_at IS NULL AND %s <> ''",
+			ident.index, ident.column, ident.column,
+		)
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("create unique index %s: %w", ident.index, err)
+		}
+	}
+
 	return nil
 }

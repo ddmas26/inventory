@@ -69,17 +69,94 @@ func (r *Repository) GetProductByName(companyID uuid.UUID, name string) (*Produc
 	return &p, nil
 }
 
-// ListProducts returns paginated products ordered by creation time, including their images.
-func (r *Repository) ListProducts(companyID uuid.UUID, offset, limit int) ([]Product, int64, error) {
+// GetProductBySKU retrieves a product by its (company-scoped) SKU.
+func (r *Repository) GetProductBySKU(companyID uuid.UUID, sku string) (*Product, error) {
+	var p Product
+	err := r.db.Preload("Images", orderProductImages).
+		Where("company_id = ? AND sku = ?", companyID, sku).First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("product sku %q: %w", sku, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.ImageURL = p.PrimaryImageURL()
+	return &p, nil
+}
+
+// GetProductByBarcode retrieves a product by its (company-scoped) barcode.
+func (r *Repository) GetProductByBarcode(companyID uuid.UUID, barcode string) (*Product, error) {
+	var p Product
+	err := r.db.Preload("Images", orderProductImages).
+		Where("company_id = ? AND barcode = ?", companyID, barcode).First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("product barcode %q: %w", barcode, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.ImageURL = p.PrimaryImageURL()
+	return &p, nil
+}
+
+// ProductIdentifierConflict reports which identifier ("sku" or "barcode") is
+// already used by a different product in the same company. Empty values are
+// ignored (an omitted barcode is not a duplicate) and "" means both are free.
+// excludeID skips the product being updated.
+func (r *Repository) ProductIdentifierConflict(companyID uuid.UUID, sku, barcode string, excludeID uuid.UUID) (string, error) {
+	taken := func(column, value string) (bool, error) {
+		q := r.db.Model(&Product{}).Where("company_id = ? AND "+column+" = ?", companyID, value)
+		if excludeID != uuid.Nil {
+			q = q.Where("id <> ?", excludeID)
+		}
+		var count int64
+		if err := q.Count(&count).Error; err != nil {
+			return false, err
+		}
+		return count > 0, nil
+	}
+
+	if sku != "" {
+		conflict, err := taken("sku", sku)
+		if err != nil {
+			return "", err
+		}
+		if conflict {
+			return "sku", nil
+		}
+	}
+	if barcode != "" {
+		conflict, err := taken("barcode", barcode)
+		if err != nil {
+			return "", err
+		}
+		if conflict {
+			return "barcode", nil
+		}
+	}
+	return "", nil
+}
+
+// ListProducts returns paginated products ordered by creation time, including
+// their images. A non-empty search matches the name, SKU or barcode.
+func (r *Repository) ListProducts(companyID uuid.UUID, offset, limit int, search string) ([]Product, int64, error) {
 	var products []Product
 	var total int64
 
-	if err := r.db.Model(&Product{}).Where("company_id = ?", companyID).Count(&total).Error; err != nil {
+	base := func() *gorm.DB {
+		q := r.db.Model(&Product{}).Where("company_id = ?", companyID)
+		if search != "" {
+			like := "%" + search + "%"
+			q = q.Where("name ILIKE ? OR sku ILIKE ? OR barcode ILIKE ?", like, like, like)
+		}
+		return q
+	}
+
+	if err := base().Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	err := r.db.Preload("Images", orderProductImages).
-		Where("company_id = ?", companyID).
+	err := base().Preload("Images", orderProductImages).
 		Order("created_at DESC").Offset(offset).Limit(limit).Find(&products).Error
 	if err != nil {
 		return nil, 0, err
@@ -93,12 +170,13 @@ func (r *Repository) ListProducts(companyID uuid.UUID, offset, limit int) ([]Pro
 	return products, total, nil
 }
 
-// UpdateProduct updates name, description, price, and the low stock threshold of
-// an existing product. Images are managed separately via ReplaceProductImages.
+// UpdateProduct updates name, description, price, SKU, barcode and the low
+// stock threshold of an existing product. Images are managed separately via
+// ReplaceProductImages.
 func (r *Repository) UpdateProduct(companyID uuid.UUID, p *Product) error {
 	result := r.db.Model(&Product{}).
 		Where("company_id = ? AND id = ?", companyID, p.ID).
-		Select("name", "description", "price", "low_stock_threshold").
+		Select("name", "description", "price", "low_stock_threshold", "sku", "barcode").
 		Updates(p)
 	if result.Error != nil {
 		return result.Error
@@ -355,7 +433,8 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 		query = query.Where("stock.created_at <= ?", *filter.CreatedTo)
 	}
 	if filter.Search != "" {
-		query = query.Where("products.name ILIKE ?", "%"+filter.Search+"%")
+		like := "%" + filter.Search + "%"
+		query = query.Where("products.name ILIKE ? OR products.sku ILIKE ? OR products.barcode ILIKE ?", like, like, like)
 	}
 
 	// Count total before pagination
@@ -377,7 +456,8 @@ func (r *Repository) ListStock(filter dtos.ListStockFilter) ([]dtos.StockDto, in
 		countQuery = countQuery.Where("stock.created_at <= ?", *filter.CreatedTo)
 	}
 	if filter.Search != "" {
-		countQuery = countQuery.Where("products.name ILIKE ?", "%"+filter.Search+"%")
+		like := "%" + filter.Search + "%"
+		countQuery = countQuery.Where("products.name ILIKE ? OR products.sku ILIKE ? OR products.barcode ILIKE ?", like, like, like)
 	}
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err

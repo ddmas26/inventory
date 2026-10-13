@@ -76,6 +76,7 @@ func main() {
 	// ── Products ──────────────────────────────────────────────
 	mux.HandleFunc("POST /api/products", h.CreateProduct)
 	mux.HandleFunc("GET /api/products", h.ListProducts)
+	mux.HandleFunc("GET /api/products/scan", h.ScanProduct)
 	mux.HandleFunc("GET /api/products/{id}", h.GetProduct)
 	mux.HandleFunc("PUT /api/products/{id}", h.UpdateProduct)
 	mux.HandleFunc("DELETE /api/products/{id}", h.DeleteProduct)
