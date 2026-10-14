@@ -16,7 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -43,7 +43,7 @@ type Store struct {
 // a disabled Store and no error, so callers never need to special-case it.
 func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 	if !cfg.Enabled() {
-		log.Println("storage: S3_BUCKET not set, product images will be stored on local disk")
+		slog.Info("storage: S3_BUCKET not set, product images will be stored on local disk")
 		return &Store{}, nil
 	}
 
@@ -65,10 +65,11 @@ func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken),
 		))
-		log.Printf("storage: using static credentials from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (session token: %s)",
-			presence(cfg.SessionToken))
+		slog.Info("storage: using static credentials",
+			"session_token", presence(cfg.SessionToken),
+		)
 	} else {
-		log.Println("storage: using the AWS SDK default credential chain (env / shared config / IAM role)")
+		slog.Info("storage: using the AWS SDK default credential chain (env / shared config / IAM role)")
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
@@ -102,7 +103,8 @@ func New(ctx context.Context, cfg config.StorageConfig) (*Store, error) {
 	if ep == "" {
 		ep = "AWS S3 (default endpoints)"
 	}
-	log.Printf("storage: bucket %q region %q endpoint %s ready (base URL %s)", s.bucket, cfg.Region, ep, s.baseURL)
+	slog.Info("storage: bucket ready",
+		"bucket", s.bucket, "region", cfg.Region, "endpoint", ep, "base_url", s.baseURL)
 	return s, nil
 }
 
@@ -167,7 +169,7 @@ func (s *Store) ensureBucket(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("storage: creating bucket %q", s.bucket)
+	slog.Info("storage: creating bucket", "bucket", s.bucket)
 	if _, err := s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(s.bucket)}); err != nil {
 		return fmt.Errorf("create bucket %q: %w", s.bucket, err)
 	}

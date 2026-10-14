@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -159,7 +159,7 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(val)
 	if err != nil || d <= 0 {
-		log.Printf("config: invalid %s=%q, falling back to %s", key, val, fallback)
+		slog.Warn("config: invalid duration, using fallback", "key", key, "value", val, "fallback", fallback.String())
 		return fallback
 	}
 	return d
@@ -174,7 +174,7 @@ func getEnvBool(key string, fallback bool) bool {
 	}
 	b, err := strconv.ParseBool(val)
 	if err != nil {
-		log.Printf("config: invalid %s=%q, falling back to %t", key, val, fallback)
+		slog.Warn("config: invalid bool, using fallback", "key", key, "value", val, "fallback", fallback)
 		return fallback
 	}
 	return b

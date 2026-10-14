@@ -15,7 +15,7 @@ import (
 	"context"
 	"flag"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -24,6 +24,7 @@ import (
 
 	"github.com/ddmas26/inventory/internal/config"
 	"github.com/ddmas26/inventory/internal/database"
+	"github.com/ddmas26/inventory/internal/logging"
 	"github.com/ddmas26/inventory/internal/storage"
 )
 
@@ -34,34 +35,35 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "report what would be migrated without changing anything")
 	flag.Parse()
 
+	logging.Init()
 	cfg := config.Load()
 
 	if !cfg.Storage.Enabled() {
-		log.Fatal("S3_BUCKET is not set — configure the object store before migrating")
+		fatalMsg("S3_BUCKET is not set — configure the object store before migrating")
 	}
 
 	ctx := context.Background()
 
 	db, err := database.Connect(cfg.DB)
 	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
+		fatal("database connection failed", err)
 	}
 
 	store, err := storage.New(ctx, cfg.Storage)
 	if err != nil {
-		log.Fatalf("Storage initialisation failed: %v", err)
+		fatal("storage initialisation failed", err)
 	}
 
 	repo := database.NewRepository(db)
 
 	images, err := repo.ListImagesByRefPrefix(legacyPrefix)
 	if err != nil {
-		log.Fatalf("Failed to list local images: %v", err)
+		fatal("failed to list local images", err)
 	}
 
-	log.Printf("Found %d image(s) stored on local disk (upload dir %q)", len(images), cfg.UploadDir)
+	slog.Info("found local images", "count", len(images), "upload_dir", cfg.UploadDir)
 	if *dryRun {
-		log.Println("Dry run — no changes will be made")
+		slog.Info("dry run, no changes will be made")
 	}
 
 	var migrated, skipped, failed int
@@ -69,7 +71,7 @@ func main() {
 	for _, img := range images {
 		filename := strings.TrimPrefix(img.URL, legacyPrefix)
 		if filename == "" || strings.ContainsAny(filename, "/\\") {
-			log.Printf("  skip %s: unexpected local reference", img.URL)
+			slog.Warn("skipping image: unexpected local reference", "url", img.URL)
 			skipped++
 			continue
 		}
@@ -77,7 +79,7 @@ func main() {
 		srcPath := filepath.Join(cfg.UploadDir, filename)
 		file, err := os.Open(srcPath)
 		if err != nil {
-			log.Printf("  skip %s: %v", img.URL, err)
+			slog.Warn("skipping image", "url", img.URL, "error", err)
 			skipped++
 			continue
 		}
@@ -87,7 +89,7 @@ func main() {
 
 		if *dryRun {
 			file.Close()
-			log.Printf("  would upload %s -> %s (%s, %d bytes)", srcPath, key, contentType, size)
+			slog.Info("would upload", "src", srcPath, "key", key, "content_type", contentType, "bytes", size)
 			migrated++
 			continue
 		}
@@ -95,25 +97,37 @@ func main() {
 		err = store.Upload(ctx, key, file, contentType, size)
 		file.Close()
 		if err != nil {
-			log.Printf("  FAILED %s: %v", srcPath, err)
+			slog.Error("upload failed", "src", srcPath, "error", err)
 			failed++
 			continue
 		}
 
 		if err := repo.UpdateImageRef(img.ID, key); err != nil {
-			log.Printf("  FAILED to update %s: %v", img.URL, err)
+			slog.Error("update image ref failed", "url", img.URL, "error", err)
 			failed++
 			continue
 		}
 
-		log.Printf("  %s -> %s", img.URL, key)
+		slog.Info("migrated image", "from", img.URL, "to", key)
 		migrated++
 	}
 
-	log.Printf("Done: %d migrated, %d skipped, %d failed", migrated, skipped, failed)
+	slog.Info("migration complete", "migrated", migrated, "skipped", skipped, "failed", failed)
 	if failed > 0 {
 		os.Exit(1)
 	}
+}
+
+// fatal logs a structured error and exits.
+func fatal(msg string, err error) {
+	slog.Error(msg, "error", err)
+	os.Exit(1)
+}
+
+// fatalMsg logs a structured error message and exits.
+func fatalMsg(msg string) {
+	slog.Error(msg)
+	os.Exit(1)
 }
 
 // detectContentType sniffs an image's MIME type from its contents (falling back

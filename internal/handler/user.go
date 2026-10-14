@@ -54,7 +54,19 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		roleID = &parsed
 	}
 
-	created, err := h.UserSvc.CreateUser(cid, req.Name, req.Email, req.Phone, req.Password, roleID)
+	var created *dtos.UserResponse
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType = "user.create", "user"
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		u, err := h.UserSvc.WithRepo(tx).CreateUser(cid, req.Name, req.Email, req.Phone, req.Password, roleID)
+		if err != nil {
+			return err
+		}
+		created = u
+		entry.EntityID, entry.NewValues = u.ID.String(), u
+		return nil
+	})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -91,6 +103,7 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit(r, claims, "user.view", "user", id.String(), nil, nil, nil)
 	respond(w, http.StatusOK, user)
 }
 
@@ -128,6 +141,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	if users == nil {
 		users = []dtos.UserDto{}
 	}
+
+	h.audit(r, claims, "user.list", "user", "", nil, nil, map[string]any{"count": total})
 
 	respond(w, http.StatusOK, map[string]interface{}{
 		"data":       users,
@@ -196,18 +211,29 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		RoleID:   roleID,
 	}
 
-	if err := h.UserSvc.Update(cid, user); err != nil {
+	var updated *database.User
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "user.update", "user", id.String()
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		svc := h.UserSvc.WithRepo(tx)
+		if err := svc.Update(cid, user); err != nil {
+			return err
+		}
+		after, err := svc.GetByID(cid, id)
+		if err != nil {
+			return err
+		}
+		updated = after
+		entry.OldValues, entry.NewValues = existing, after
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
 		}
 		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	updated, err := h.UserSvc.GetByID(cid, id)
-	if err != nil {
-		respond(w, http.StatusOK, user)
 		return
 	}
 
@@ -232,7 +258,12 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.UserSvc.Delete(cid, id); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "user.delete", "user", id.String()
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.UserSvc.WithRepo(tx).Delete(cid, id)
+	}); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
@@ -262,7 +293,12 @@ func (h *Handler) ActivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.UserSvc.ActivateUser(cid, id); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "user.activate", "user", id.String()
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.UserSvc.WithRepo(tx).ActivateUser(cid, id)
+	}); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return
@@ -292,7 +328,12 @@ func (h *Handler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.UserSvc.DeactivateUser(cid, id); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "user.deactivate", "user", id.String()
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.UserSvc.WithRepo(tx).DeactivateUser(cid, id)
+	}); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "user not found")
 			return

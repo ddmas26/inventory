@@ -17,6 +17,12 @@ func NewRoleService(repo *database.Repository) *RoleService {
 	return &RoleService{repo: repo}
 }
 
+// WithRepo returns a copy of the service bound to another repository — used to
+// run an operation on a transaction-scoped repository.
+func (s *RoleService) WithRepo(repo *database.Repository) *RoleService {
+	return &RoleService{repo: repo}
+}
+
 // ── Role CRUD ──────────────────────────────────────────────────────────────
 
 func (s *RoleService) CreateRole(companyID uuid.UUID, name, description string) (*dtos.RoleResponse, error) {
@@ -126,6 +132,15 @@ func (s *RoleService) AddPermissionToRole(companyID, roleID, permissionID uuid.U
 func (s *RoleService) RemovePermissionFromRole(companyID, roleID, permissionID uuid.UUID) (*database.Role, error) {
 	if err := s.repo.RemovePermissionFromRole(companyID, roleID, permissionID); err != nil {
 		return nil, fmt.Errorf("remove permission from role: %w", err)
+	}
+	return s.repo.GetRoleByID(companyID, roleID)
+}
+
+// SetPermissions replaces the role's whole permission set and returns the
+// updated role. Used by the "edit all permissions, then save" UI flow.
+func (s *RoleService) SetPermissions(companyID, roleID uuid.UUID, permissionIDs []uuid.UUID) (*database.Role, error) {
+	if err := s.repo.SetRolePermissions(companyID, roleID, permissionIDs); err != nil {
+		return nil, err
 	}
 	return s.repo.GetRoleByID(companyID, roleID)
 }

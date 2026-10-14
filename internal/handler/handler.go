@@ -23,24 +23,30 @@ type Handler struct {
 	AuthSvc      *auth.AuthService
 	PlatformAuth *auth.PlatformAuthService
 	RoleSvc      *service.RoleService
-	Session      *auth.SessionStore
-	Storage      *storage.Store
-	UploadDir    string
+	// CompanyProfileSvc owns the company profile and its approval workflow.
+	CompanyProfileSvc *service.CompanyProfileService
+	// Audit records the business audit trail.
+	Audit     *service.AuditService
+	Session   *auth.SessionStore
+	Storage   *storage.Store
+	UploadDir string
 }
 
-func NewHandler(repo *database.Repository, stockSvc *service.StockService, productSvc *service.ProductService, inventorySvc *service.InventoryService, userSvc *service.UserService, authSvc *auth.AuthService, platformAuth *auth.PlatformAuthService, roleSvc *service.RoleService, session *auth.SessionStore, store *storage.Store, uploadDir string) *Handler {
+func NewHandler(repo *database.Repository, stockSvc *service.StockService, productSvc *service.ProductService, inventorySvc *service.InventoryService, userSvc *service.UserService, authSvc *auth.AuthService, platformAuth *auth.PlatformAuthService, roleSvc *service.RoleService, companyProfileSvc *service.CompanyProfileService, auditSvc *service.AuditService, session *auth.SessionStore, store *storage.Store, uploadDir string) *Handler {
 	return &Handler{
-		Repo:         repo,
-		StockSvc:     stockSvc,
-		ProductSvc:   productSvc,
-		InventorySvc: inventorySvc,
-		UserSvc:      userSvc,
-		AuthSvc:      authSvc,
-		PlatformAuth: platformAuth,
-		RoleSvc:      roleSvc,
-		Session:      session,
-		Storage:      store,
-		UploadDir:    uploadDir,
+		Repo:              repo,
+		StockSvc:          stockSvc,
+		ProductSvc:        productSvc,
+		InventorySvc:      inventorySvc,
+		UserSvc:           userSvc,
+		AuthSvc:           authSvc,
+		PlatformAuth:      platformAuth,
+		RoleSvc:           roleSvc,
+		CompanyProfileSvc: companyProfileSvc,
+		Audit:             auditSvc,
+		Session:           session,
+		Storage:           store,
+		UploadDir:         uploadDir,
 	}
 }
 

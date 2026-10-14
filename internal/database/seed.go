@@ -3,7 +3,7 @@ package database
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -56,6 +56,13 @@ var defaultPermissions = []struct {
 
 	// Dashboard
 	{Code: "dashboard.read", Name: "View Dashboard", Description: "Can view the dashboard"},
+
+	// Company profile
+	{Code: "company.read", Name: "View Company Profile", Description: "Can view the company profile"},
+	{Code: "company.edit", Name: "Edit Company Profile", Description: "Can submit company profile changes for approval"},
+
+	// Audit
+	{Code: "audit.read", Name: "View Audit Log", Description: "Can view the company activity / audit log"},
 }
 
 // getAdminCredentials returns the admin email and password from environment or defaults.
@@ -75,7 +82,7 @@ func getAdminCredentials() (email, password string) {
 // permission, and an admin user, then backfills any pre-existing single-tenant
 // rows into the default company. Every step is idempotent.
 func Seed(db *gorm.DB) error {
-	log.Println("Seeding database...")
+	slog.Info("seeding database")
 
 	repo := NewRepository(db)
 
@@ -105,7 +112,7 @@ func Seed(db *gorm.DB) error {
 				return fmt.Errorf("seed: create permission %s: %w", p.Code, err)
 			}
 			permMap[p.Code] = perm
-			log.Printf("  ✓ Created permission: %s", p.Code)
+			slog.Info("created permission", "code", p.Code)
 		} else {
 			permMap[p.Code] = existing
 		}
@@ -134,7 +141,7 @@ func Seed(db *gorm.DB) error {
 			return fmt.Errorf("seed: create super admin role: %w", err)
 		}
 		superAdminRole = role
-		log.Println("  ✓ Created role: Super Admin")
+		slog.Info("created Super Admin role")
 
 		// Attach all permissions to the new role
 		for _, p := range permMap {
@@ -142,7 +149,7 @@ func Seed(db *gorm.DB) error {
 				return fmt.Errorf("seed: add permission %s to super admin: %w", p.Code, err)
 			}
 		}
-		log.Printf("  ✓ Attached %d permissions to Super Admin role", len(permMap))
+		slog.Info("attached permissions to Super Admin role", "count", len(permMap))
 	} else {
 		// Sync any missing permissions to the existing Super Admin role
 		for _, p := range permMap {
@@ -157,7 +164,7 @@ func Seed(db *gorm.DB) error {
 				if err := repo.AddPermissionToRole(company.ID, superAdminRole.ID, p.ID); err != nil {
 					return fmt.Errorf("seed: add permission %s to super admin: %w", p.Code, err)
 				}
-				log.Printf("  ✓ Synced permission to Super Admin: %s", p.Code)
+				slog.Info("synced permission to Super Admin", "code", p.Code)
 			}
 		}
 	}
@@ -182,9 +189,9 @@ func Seed(db *gorm.DB) error {
 		if err := repo.CreateUser(adminUser); err != nil {
 			return fmt.Errorf("seed: create admin user: %w", err)
 		}
-		log.Printf("  ✓ Created admin user: %s / %s", adminEmail, adminPassword)
+		slog.Info("created admin user", "email", adminEmail)
 	} else {
-		log.Println("  - Admin user already exists, skipping")
+		slog.Info("admin user already exists, skipping")
 	}
 
 	// ── 6. Create the platform operator if not exists ────────
@@ -192,7 +199,7 @@ func Seed(db *gorm.DB) error {
 		return err
 	}
 
-	log.Println("Seeding complete.")
+	slog.Info("seeding complete")
 	return nil
 }
 
@@ -222,7 +229,7 @@ func ensureDefaultCompany(repo *Repository) (*Company, error) {
 	if err := repo.CreateCompany(&company); err != nil {
 		return nil, err
 	}
-	log.Printf("  ✓ Created default company: %s", company.Name)
+	slog.Info("created default company", "name", company.Name)
 	return &company, nil
 }
 
@@ -245,7 +252,7 @@ func seedPlatformAdmin(repo *Repository) error {
 
 	existing, _ := repo.GetPlatformUserByEmail(email)
 	if existing != nil {
-		log.Println("  - Platform admin already exists, skipping")
+		slog.Info("platform admin already exists, skipping")
 		return nil
 	}
 
@@ -264,7 +271,7 @@ func seedPlatformAdmin(repo *Repository) error {
 	if err := repo.CreatePlatformUser(pu); err != nil {
 		return fmt.Errorf("seed: create platform admin: %w", err)
 	}
-	log.Printf("  ✓ Created platform admin: %s / %s", email, password)
+	slog.Info("created platform admin", "email", email)
 	return nil
 }
 

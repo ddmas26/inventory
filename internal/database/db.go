@@ -2,7 +2,7 @@ package database
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/ddmas26/inventory/internal/config"
 	"gorm.io/driver/postgres"
@@ -13,7 +13,7 @@ import (
 // Connect opens a PostgreSQL connection using GORM and runs auto-migration.
 func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger: newSlogGormLogger(logger.Warn),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -28,7 +28,7 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetMaxOpenConns(100)
 
-	log.Println("Connected to PostgreSQL successfully")
+	slog.Info("connected to PostgreSQL")
 
 	return db, nil
 }
@@ -36,8 +36,8 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 // EnableSQLLogging switches the GORM logger to Info mode so all queries
 // are printed. Call this after migration / seeding to avoid startup noise.
 func EnableSQLLogging(db *gorm.DB) {
-	db.Logger = db.Logger.LogMode(logger.Info)
-	log.Println("SQL query logging enabled")
+	db.Logger = newSlogGormLogger(logger.Info)
+	slog.Info("SQL query logging enabled")
 }
 
 // legacyIndexes are indexes that must be dropped before AutoMigrate runs.
@@ -68,6 +68,8 @@ func Migrate(db *gorm.DB) error {
 
 	err := db.AutoMigrate(
 		&Company{},
+		&CompanyProfile{},
+		&CompanyProfileRequest{},
 		&Product{},
 		&ProductImage{},
 		&Inventory{},
@@ -76,6 +78,7 @@ func Migrate(db *gorm.DB) error {
 		&Role{},
 		&Permission{},
 		&PlatformUser{},
+		&AuditLog{},
 	)
 	if err != nil {
 		return fmt.Errorf("auto-migration failed: %w", err)
@@ -85,7 +88,24 @@ func Migrate(db *gorm.DB) error {
 		return err
 	}
 
-	log.Println("Database migration completed")
+	if err := migrateCompanyProfile(db); err != nil {
+		return err
+	}
+
+	slog.Info("database migration completed")
+	return nil
+}
+
+// migrateCompanyProfile enforces one pending profile change request per company
+// with a partial unique index. Unlike a plain unique index, it only constrains
+// rows with status = 'pending', so a company keeps its full review history while
+// still having at most one request under review at any time.
+func migrateCompanyProfile(db *gorm.DB) error {
+	stmt := "CREATE UNIQUE INDEX IF NOT EXISTS idx_company_profile_requests_pending " +
+		"ON company_profile_requests (company_id) WHERE status = 'pending'"
+	if err := db.Exec(stmt).Error; err != nil {
+		return fmt.Errorf("create pending profile request index: %w", err)
+	}
 	return nil
 }
 

@@ -48,7 +48,19 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.ProductSvc.AddProduct(cid, req.Name, req.Description, req.SKU, req.Barcode, req.Images, req.Price, req.LowStockThreshold)
+	var created *dtos.ProductResponse
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType = "product.create", "product"
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		p, err := h.ProductSvc.WithRepo(tx).AddProduct(cid, req.Name, req.Description, req.SKU, req.Barcode, req.Images, req.Price, req.LowStockThreshold)
+		if err != nil {
+			return err
+		}
+		created = p
+		entry.EntityID, entry.NewValues = p.ID.String(), p
+		return nil
+	})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -186,6 +198,7 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Snapshot the current values so the audit entry carries a before/after.
 	product := &database.Product{
 		ID:                id,
 		Name:              req.Name,
@@ -196,18 +209,30 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		LowStockThreshold: req.LowStockThreshold,
 	}
 
-	if err := h.ProductSvc.Update(cid, product, req.Images); err != nil {
+	var updated *database.Product
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "product.update", "product", id.String()
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		svc := h.ProductSvc.WithRepo(tx)
+		before, _ := svc.GetByID(cid, id)
+		if err := svc.Update(cid, product, req.Images); err != nil {
+			return err
+		}
+		after, err := svc.GetByID(cid, id)
+		if err != nil {
+			after = product
+		}
+		updated = after
+		entry.OldValues, entry.NewValues = before, after
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "product not found")
 			return
 		}
 		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	updated, err := h.ProductSvc.GetByID(cid, id)
-	if err != nil {
-		respond(w, http.StatusOK, product)
 		return
 	}
 
@@ -232,7 +257,12 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.ProductSvc.Delete(cid, id); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "product.delete", "product", id.String()
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.ProductSvc.WithRepo(tx).Delete(cid, id)
+	}); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "product not found")
 			return

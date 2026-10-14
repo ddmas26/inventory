@@ -46,6 +46,73 @@ func (c *Company) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// CompanyProfileStatus is the review state of a staged profile change.
+type CompanyProfileStatus string
+
+const (
+	CompanyProfilePending  CompanyProfileStatus = "pending"
+	CompanyProfileApproved CompanyProfileStatus = "approved"
+	CompanyProfileRejected CompanyProfileStatus = "rejected"
+)
+
+// CompanyProfile is the live, approved business profile of a company. It is kept
+// separate from Company (identity + lifecycle status) because profile edits are
+// user-driven and must pass through platform review before they take effect.
+// There is at most one profile per company.
+type CompanyProfile struct {
+	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CompanyID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"company_id"`
+	LegalName   string    `gorm:"type:varchar(255)" json:"legal_name"`
+	Email       string    `gorm:"type:varchar(255)" json:"email"`
+	Phone       string    `gorm:"type:varchar(32)" json:"phone"`
+	Website     string    `gorm:"type:varchar(255)" json:"website"`
+	Address     string    `gorm:"type:text" json:"address"`
+	City        string    `gorm:"type:varchar(120)" json:"city"`
+	Country     string    `gorm:"type:varchar(120)" json:"country"`
+	TaxID       string    `gorm:"type:varchar(64)" json:"tax_id"`
+	LogoURL     string    `gorm:"type:text" json:"logo_url"`
+	Description string    `gorm:"type:text" json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (CompanyProfile) TableName() string { return "company_profiles" }
+
+// BeforeCreate hook ensures UUID is set if empty.
+func (cp *CompanyProfile) BeforeCreate(tx *gorm.DB) error {
+	if cp.ID == uuid.Nil {
+		cp.ID = uuid.New()
+	}
+	return nil
+}
+
+// CompanyProfileRequest is a staged profile edit awaiting platform review. Only
+// one request per company may be pending at a time; reviewed requests are kept as
+// history. Payload holds the complete proposed profile as JSON so a reviewer can
+// diff it against the live profile.
+type CompanyProfileRequest struct {
+	ID          uuid.UUID            `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CompanyID   uuid.UUID            `gorm:"type:uuid;not null;index" json:"company_id"`
+	RequestedBy uuid.UUID            `gorm:"type:uuid;index" json:"requested_by"`
+	Payload     string               `gorm:"type:text;not null" json:"payload"`
+	Status      CompanyProfileStatus `gorm:"type:varchar(20);not null;default:pending;index" json:"status"`
+	Reason      string               `gorm:"type:text" json:"reason"`
+	ReviewedBy  *uuid.UUID           `gorm:"type:uuid" json:"reviewed_by"`
+	ReviewedAt  *time.Time           `json:"reviewed_at"`
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
+}
+
+func (CompanyProfileRequest) TableName() string { return "company_profile_requests" }
+
+// BeforeCreate hook ensures UUID is set if empty.
+func (cpr *CompanyProfileRequest) BeforeCreate(tx *gorm.DB) error {
+	if cpr.ID == uuid.Nil {
+		cpr.ID = uuid.New()
+	}
+	return nil
+}
+
 // Product represents a product that can be stocked in inventories.
 type Product struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
@@ -263,6 +330,46 @@ type PlatformUser struct {
 func (p *PlatformUser) BeforeCreate(tx *gorm.DB) error {
 	if p.ID == uuid.Nil {
 		p.ID = uuid.New()
+	}
+	return nil
+}
+
+// Audit actor types recorded on every audit entry.
+const (
+	AuditActorUser     = "user"     // a company user acting within their tenant
+	AuditActorPlatform = "platform" // a platform operator
+	AuditActorSystem   = "system"   // automated / background action
+)
+
+// AuditLog is an immutable record of a mutating action: who did what, to which
+// entity, when, and (when known) the before/after values. CompanyID is nullable
+// so platform-level actions not tied to a single tenant can be recorded too.
+// Values are stored as JSON text (never queried inside), so a plain text column
+// is used instead of jsonb.
+type AuditLog struct {
+	ID         uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CompanyID  *uuid.UUID `gorm:"type:uuid;index" json:"company_id,omitempty"`
+	ActorType  string     `gorm:"type:varchar(20);not null" json:"actor_type"`
+	ActorID    *uuid.UUID `gorm:"type:uuid" json:"actor_id,omitempty"`
+	ActorName  string     `gorm:"type:varchar(120)" json:"actor_name"`
+	Action     string     `gorm:"type:varchar(80);not null;index" json:"action"`
+	EntityType string     `gorm:"type:varchar(60);index" json:"entity_type"`
+	EntityID   string     `gorm:"type:varchar(64)" json:"entity_id"`
+	OldValues  string     `gorm:"type:text" json:"old_values,omitempty"`
+	NewValues  string     `gorm:"type:text" json:"new_values,omitempty"`
+	Metadata   string     `gorm:"type:text" json:"metadata,omitempty"`
+	IP         string     `gorm:"type:varchar(64)" json:"ip,omitempty"`
+	UserAgent  string     `gorm:"type:varchar(255)" json:"user_agent,omitempty"`
+	RequestID  string     `gorm:"type:varchar(64);index" json:"request_id,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+func (AuditLog) TableName() string { return "audit_logs" }
+
+// BeforeCreate hook ensures UUID is set if empty.
+func (a *AuditLog) BeforeCreate(tx *gorm.DB) error {
+	if a.ID == uuid.Nil {
+		a.ID = uuid.New()
 	}
 	return nil
 }

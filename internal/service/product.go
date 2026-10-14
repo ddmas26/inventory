@@ -52,6 +52,12 @@ func NewProductService(repo *database.Repository, store *storage.Store) *Product
 	return &ProductService{repo: repo, storage: store}
 }
 
+// WithRepo returns a copy of the service bound to another repository — used to
+// run an operation on a transaction-scoped repository.
+func (s *ProductService) WithRepo(repo *database.Repository) *ProductService {
+	return &ProductService{repo: repo, storage: s.storage}
+}
+
 // normalizeImages trims, de-duplicates and validates an image list, making sure
 // at most one image is flagged as primary. Image references are canonicalised to
 // object keys so the rows survive a change of storage endpoint.

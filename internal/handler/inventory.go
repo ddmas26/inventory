@@ -41,7 +41,19 @@ func (h *Handler) CreateInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inv, err := h.InventorySvc.CreateInventory(cid, req.Name, req.Address, req.Latitude, req.Longitude)
+	var inv *database.Inventory
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType = "inventory.create", "inventory"
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		created, err := h.InventorySvc.WithRepo(tx).CreateInventory(cid, req.Name, req.Address, req.Latitude, req.Longitude)
+		if err != nil {
+			return err
+		}
+		inv = created
+		entry.EntityID, entry.NewValues = created.ID.String(), created
+		return nil
+	})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -154,18 +166,30 @@ func (h *Handler) UpdateInventory(w http.ResponseWriter, r *http.Request) {
 		Longitude: req.Longitude,
 	}
 
-	if err := h.InventorySvc.Update(cid, inventory); err != nil {
+	var updated *database.Inventory
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "inventory.update", "inventory", id.String()
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		svc := h.InventorySvc.WithRepo(tx)
+		before, _ := svc.GetByID(cid, id)
+		if err := svc.Update(cid, inventory); err != nil {
+			return err
+		}
+		after, err := svc.GetByID(cid, id)
+		if err != nil {
+			after = inventory
+		}
+		updated = after
+		entry.OldValues, entry.NewValues = before, after
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
 			return
 		}
 		respondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	updated, err := h.InventorySvc.GetByID(cid, id)
-	if err != nil {
-		respond(w, http.StatusOK, inventory)
 		return
 	}
 
@@ -190,7 +214,12 @@ func (h *Handler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.InventorySvc.Delete(cid, id); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "inventory.delete", "inventory", id.String()
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.InventorySvc.WithRepo(tx).Delete(cid, id)
+	}); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "inventory not found")
 			return

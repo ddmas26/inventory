@@ -64,17 +64,31 @@ func (h *Handler) AddStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.AddStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
+	meta := map[string]any{"inventory_id": req.InventoryID, "product_id": req.ProductID, "quantity": req.Quantity}
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "stock.add", "stock", req.ProductID.String()
+	entry.Metadata = meta
+
+	var stock *database.Stock
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		svc := h.StockSvc.WithRepo(tx)
+		if err := svc.AddStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
+			return err
+		}
+		if s, err := svc.GetStock(cid, req.InventoryID, req.ProductID); err == nil {
+			stock = s
+			entry.NewValues = s
+		}
+		return nil
+	}); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.StockSvc.GetStock(cid, req.InventoryID, req.ProductID)
-	if err != nil {
+	if stock == nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock added successfully"})
 		return
 	}
-
 	respond(w, http.StatusOK, stock)
 }
 
@@ -101,17 +115,31 @@ func (h *Handler) DeductStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.DeductStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
+	meta := map[string]any{"inventory_id": req.InventoryID, "product_id": req.ProductID, "quantity": req.Quantity}
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "stock.deduct", "stock", req.ProductID.String()
+	entry.Metadata = meta
+
+	var stock *database.Stock
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		svc := h.StockSvc.WithRepo(tx)
+		if err := svc.DeductStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
+			return err
+		}
+		if s, err := svc.GetStock(cid, req.InventoryID, req.ProductID); err == nil {
+			stock = s
+			entry.NewValues = s
+		}
+		return nil
+	}); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.StockSvc.GetStock(cid, req.InventoryID, req.ProductID)
-	if err != nil {
+	if stock == nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock deducted successfully"})
 		return
 	}
-
 	respond(w, http.StatusOK, stock)
 }
 
@@ -138,17 +166,31 @@ func (h *Handler) SetStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.SetStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
+	meta := map[string]any{"inventory_id": req.InventoryID, "product_id": req.ProductID, "quantity": req.Quantity}
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "stock.set", "stock", req.ProductID.String()
+	entry.Metadata = meta
+
+	var stock *database.Stock
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		svc := h.StockSvc.WithRepo(tx)
+		if err := svc.SetStock(cid, req.InventoryID, req.ProductID, req.Quantity); err != nil {
+			return err
+		}
+		if s, err := svc.GetStock(cid, req.InventoryID, req.ProductID); err == nil {
+			stock = s
+			entry.NewValues = s
+		}
+		return nil
+	}); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	stock, err := h.StockSvc.GetStock(cid, req.InventoryID, req.ProductID)
-	if err != nil {
+	if stock == nil {
 		respond(w, http.StatusOK, map[string]string{"message": "stock set successfully"})
 		return
 	}
-
 	respond(w, http.StatusOK, stock)
 }
 
@@ -253,7 +295,13 @@ func (h *Handler) RemoveStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.RemoveStock(cid, req.InventoryID, req.ProductID); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "stock.remove", "stock", req.ProductID.String()
+	entry.Metadata = map[string]any{"inventory_id": req.InventoryID, "product_id": req.ProductID}
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.StockSvc.WithRepo(tx).RemoveStock(cid, req.InventoryID, req.ProductID)
+	}); err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "stock entry not found")
 			return
@@ -288,7 +336,18 @@ func (h *Handler) TransferStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.StockSvc.TransferStock(cid, req.FromInventoryID, req.ToInventoryID, req.ProductID, req.Quantity); err != nil {
+	entry := auditUserEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = "stock.transfer", "stock", req.ProductID.String()
+	entry.Metadata = map[string]any{
+		"from_inventory_id": req.FromInventoryID,
+		"to_inventory_id":   req.ToInventoryID,
+		"product_id":        req.ProductID,
+		"quantity":          req.Quantity,
+	}
+
+	if err := h.auditMutation(&entry, func(tx *database.Repository) error {
+		return h.StockSvc.WithRepo(tx).TransferStock(cid, req.FromInventoryID, req.ToInventoryID, req.ProductID, req.Quantity)
+	}); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

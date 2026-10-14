@@ -18,6 +18,12 @@ func NewUserService(repo *database.Repository) *UserService {
 	return &UserService{repo: repo}
 }
 
+// WithRepo returns a copy of the service bound to another repository — used to
+// run an operation on a transaction-scoped repository.
+func (s *UserService) WithRepo(repo *database.Repository) *UserService {
+	return &UserService{repo: repo}
+}
+
 func (s *UserService) CreateUser(companyID uuid.UUID, name, email, phone, password string, roleID *uuid.UUID) (*dtos.UserResponse, error) {
 	if name == "" {
 		return nil, errors.New("user name is required")

@@ -20,6 +20,12 @@ func NewStockService(repo *database.Repository, store *storage.Store) *StockServ
 	return &StockService{repo: repo, storage: store}
 }
 
+// WithRepo returns a copy of the service bound to another repository — used to
+// run an operation on a transaction-scoped repository.
+func (s *StockService) WithRepo(repo *database.Repository) *StockService {
+	return &StockService{repo: repo, storage: s.storage}
+}
+
 // AddStock adds quantity to a product at an inventory. Creates entry if missing.
 func (s *StockService) AddStock(companyID, inventoryID, productID uuid.UUID, amount int) error {
 	if amount <= 0 {

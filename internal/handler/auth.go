@@ -3,7 +3,9 @@ package handler
 import (
 	"net/http"
 
+	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/dtos"
+	"github.com/ddmas26/inventory/internal/service"
 	"github.com/google/uuid"
 )
 
@@ -21,6 +23,21 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Onboarding a new tenant: the company is created pending approval.
+	h.Audit.Record(service.AuditEntry{
+		CompanyID:  &user.CompanyID,
+		ActorType:  database.AuditActorUser,
+		ActorID:    &user.ID,
+		ActorName:  user.Name,
+		Action:     "auth.register",
+		EntityType: "company",
+		EntityID:   user.CompanyID.String(),
+		NewValues:  map[string]any{"company_name": req.CompanyName, "email": user.Email},
+		IP:         clientIP(r),
+		UserAgent:  r.UserAgent(),
+		RequestID:  RequestIDFromContext(r.Context()),
+	})
+
 	respond(w, http.StatusCreated, user)
 }
 
@@ -34,9 +51,33 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.AuthSvc.Login(req)
 	if err != nil {
+		h.Audit.Record(service.AuditEntry{
+			ActorType:  database.AuditActorUser,
+			Action:     "auth.login_failed",
+			EntityType: "user",
+			Metadata:   map[string]string{"email": req.Email},
+			IP:         clientIP(r),
+			UserAgent:  r.UserAgent(),
+			RequestID:  RequestIDFromContext(r.Context()),
+		})
 		respondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+
+	companyID := resp.User.CompanyID
+	userID := resp.User.ID
+	h.Audit.Record(service.AuditEntry{
+		CompanyID:  &companyID,
+		ActorType:  database.AuditActorUser,
+		ActorID:    &userID,
+		ActorName:  resp.User.Name,
+		Action:     "auth.login",
+		EntityType: "user",
+		EntityID:   userID.String(),
+		IP:         clientIP(r),
+		UserAgent:  r.UserAgent(),
+		RequestID:  RequestIDFromContext(r.Context()),
+	})
 
 	respond(w, http.StatusOK, resp)
 }
@@ -95,6 +136,11 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req dtos.LogoutRequest
 	_ = decode(r, &req) // body is optional
+
+	// Capture the actor before the session is revoked.
+	if claims, err := h.sessionFromRequest(r); err == nil {
+		h.audit(r, claims, "auth.logout", "user", claims.UserID, nil, nil, nil)
+	}
 
 	h.AuthSvc.Logout(bearerToken(r), req.RefreshToken)
 

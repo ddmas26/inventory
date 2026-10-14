@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -10,28 +10,32 @@ import (
 	"github.com/ddmas26/inventory/internal/config"
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/handler"
+	"github.com/ddmas26/inventory/internal/logging"
 	"github.com/ddmas26/inventory/internal/service"
 	"github.com/ddmas26/inventory/internal/storage"
 )
 
 func main() {
+	// Configure structured logging first so every later log line is JSON.
+	logging.Init()
+
 	// Load configuration from environment
 	cfg := config.Load()
 
 	// Connect to PostgreSQL
 	db, err := database.Connect(cfg.DB)
 	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
+		fatal("database connection failed", err)
 	}
 
 	// Run auto-migration (creates/updates tables)
 	if err := database.Migrate(db); err != nil {
-		log.Fatalf("Migration failed: %v", err)
+		fatal("migration failed", err)
 	}
 
 	// Seed default data (admin user, Super Admin role, all permissions)
 	if err := database.Seed(db); err != nil {
-		log.Fatalf("Seeding failed: %v", err)
+		fatal("seeding failed", err)
 	}
 
 	// Enable SQL query logging for runtime (not needed during migration/seed)
@@ -40,18 +44,21 @@ func main() {
 	// Initialize Redis token store (access sessions + refresh tokens)
 	session := auth.NewSessionStore(cfg.Redis.Addr(), cfg.Redis.Password, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 	defer session.Close()
-	log.Printf("Token store: access TTL %s, refresh TTL %s", cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
+	slog.Info("token store ready",
+		"access_ttl", cfg.Auth.AccessTokenTTL.String(),
+		"refresh_ttl", cfg.Auth.RefreshTokenTTL.String(),
+	)
 
 	// Ensure the directory used for product images exists
 	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
-		log.Fatalf("Failed to create upload directory %q: %v", cfg.UploadDir, err)
+		fatal("failed to create upload directory", err, "dir", cfg.UploadDir)
 	}
 
 	// Initialize the S3-compatible object store for product images
 	// (MinIO locally, AWS S3 in production — same code, different env vars).
 	store, err := storage.New(context.Background(), cfg.Storage)
 	if err != nil {
-		log.Fatalf("Storage initialisation failed: %v", err)
+		fatal("storage initialisation failed", err)
 	}
 
 	// Initialize repository, services, and handler
@@ -63,7 +70,9 @@ func main() {
 	authSvc := auth.NewAuthService(repo, session)
 	platformAuthSvc := auth.NewPlatformAuthService(repo, session)
 	roleSvc := service.NewRoleService(repo)
-	h := handler.NewHandler(repo, stockSvc, productSvc, inventorySvc, userSvc, authSvc, platformAuthSvc, roleSvc, session, store, cfg.UploadDir)
+	companyProfileSvc := service.NewCompanyProfileService(repo)
+	auditSvc := service.NewAuditService(repo)
+	h := handler.NewHandler(repo, stockSvc, productSvc, inventorySvc, userSvc, authSvc, platformAuthSvc, roleSvc, companyProfileSvc, auditSvc, session, store, cfg.UploadDir)
 
 	// Set up routes
 	mux := http.NewServeMux()
@@ -113,6 +122,14 @@ func main() {
 	mux.HandleFunc("POST /api/auth/logout", h.Logout)
 	mux.HandleFunc("GET /api/auth/me", h.Me)
 
+	// ── Company profile (tenant-owned, platform-approved) ─────
+	mux.HandleFunc("GET /api/company/profile", h.GetCompanyProfile)
+	mux.HandleFunc("PUT /api/company/profile", h.UpdateCompanyProfile)
+	mux.HandleFunc("GET /api/company/profile/requests", h.ListCompanyProfileRequests)
+
+	// ── Audit log (tenant) ────────────────────────────────────
+	mux.HandleFunc("GET /api/audit-logs", h.ListAuditLogs)
+
 	// ── Platform (operator) auth ──────────────────────────────
 	mux.HandleFunc("POST /api/platform/auth/login", h.PlatformLogin)
 	mux.HandleFunc("POST /api/platform/auth/logout", h.PlatformLogout)
@@ -126,6 +143,15 @@ func main() {
 	mux.HandleFunc("PATCH /api/platform/companies/{id}/reject", h.RejectCompany)
 	mux.HandleFunc("PATCH /api/platform/companies/{id}/suspend", h.SuspendCompany)
 
+	// ── Platform (company profile review) ─────────────────────
+	mux.HandleFunc("GET /api/platform/profile-requests", h.ListProfileRequests)
+	mux.HandleFunc("GET /api/platform/profile-requests/{id}", h.GetProfileRequest)
+	mux.HandleFunc("PATCH /api/platform/profile-requests/{id}/approve", h.ApproveProfileRequest)
+	mux.HandleFunc("PATCH /api/platform/profile-requests/{id}/reject", h.RejectProfileRequest)
+
+	// ── Platform (audit log) ──────────────────────────────────
+	mux.HandleFunc("GET /api/platform/audit-logs", h.ListPlatformAuditLogs)
+
 	// ── Roles ────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/roles", h.CreateRole)
 	mux.HandleFunc("GET /api/roles", h.ListRoles)
@@ -133,6 +159,7 @@ func main() {
 	mux.HandleFunc("PUT /api/roles/{id}", h.UpdateRole)
 	mux.HandleFunc("DELETE /api/roles/{id}", h.DeleteRole)
 	mux.HandleFunc("POST /api/roles/{id}/permissions", h.AddPermissionToRole)
+	mux.HandleFunc("PUT /api/roles/{id}/permissions", h.SetRolePermissions)
 	mux.HandleFunc("DELETE /api/roles/{id}/permissions/{permissionId}", h.RemovePermissionFromRole)
 
 	// ── Permissions ──────────────────────────────────────────
@@ -147,8 +174,16 @@ func main() {
 		port = "9080"
 	}
 
-	log.Printf("Inventory API server starting on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	slog.Info("inventory API server starting", "port", port)
+	if err := http.ListenAndServe(":"+port, handler.RequestLogger(mux)); err != nil {
+		fatal("server failed", err)
 	}
+}
+
+// fatal logs a structured error and exits. It replaces log.Fatalf so that startup
+// failures go through the same JSON logger as the rest of the application.
+func fatal(msg string, err error, attrs ...any) {
+	attrs = append(attrs, "error", err)
+	slog.Error(msg, attrs...)
+	os.Exit(1)
 }

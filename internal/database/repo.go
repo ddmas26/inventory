@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -28,6 +29,15 @@ type Repository struct {
 
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
+}
+
+// Tx runs fn inside a database transaction, handing it a Repository bound to that
+// transaction. Returning an error rolls back; returning nil commits. Use it to
+// make a mutation and its audit entry commit (or roll back) together.
+func (r *Repository) Tx(fn func(tx *Repository) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return fn(&Repository{db: tx})
+	})
 }
 
 // =============================================================================
@@ -930,6 +940,52 @@ func (r *Repository) RemovePermissionFromRole(companyID, roleID, permissionID uu
 	return r.db.Model(role).Association("Permissions").Delete(perm)
 }
 
+// SetRolePermissions replaces a role's entire permission set in one transaction.
+// It backs the "check every permission you need, then save the whole role" flow:
+// the caller sends the complete desired set and the association is rebuilt from
+// it. An empty slice clears every permission from the role.
+//
+// The role must belong to the company (otherwise ErrNotFound, so cross-tenant
+// IDs surface as 404) and every permission ID must exist in the global catalog —
+// an unknown ID aborts the whole operation so a role is never left half-updated.
+func (r *Repository) SetRolePermissions(companyID, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var role Role
+		err := tx.Where("company_id = ? AND id = ?", companyID, roleID).First(&role).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("role %s: %w", roleID, ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
+
+		// De-duplicate: the set is what matters, not the order or repeats.
+		seen := make(map[uuid.UUID]struct{}, len(permissionIDs))
+		for _, id := range permissionIDs {
+			seen[id] = struct{}{}
+		}
+
+		perms := make([]Permission, 0, len(seen))
+		if len(seen) > 0 {
+			ids := make([]uuid.UUID, 0, len(seen))
+			for id := range seen {
+				ids = append(ids, id)
+			}
+			if err := tx.Where("id IN ?", ids).Find(&perms).Error; err != nil {
+				return err
+			}
+			if len(perms) != len(ids) {
+				return errors.New("one or more permissions do not exist")
+			}
+		}
+
+		if len(perms) == 0 {
+			return tx.Model(&role).Association("Permissions").Clear()
+		}
+		return tx.Model(&role).Association("Permissions").Replace(perms)
+	})
+}
+
 // =============================================================================
 // Permission CRUD
 // =============================================================================
@@ -1192,7 +1248,235 @@ func (r *Repository) GetPlatformUserByID(id uuid.UUID) (*PlatformUser, error) {
 }
 
 // =============================================================================
+// Company profile (tenant-owned, platform-approved)
+// =============================================================================
+
+// GetCompanyProfile returns the live (approved) profile of a company.
+func (r *Repository) GetCompanyProfile(companyID uuid.UUID) (*CompanyProfile, error) {
+	var p CompanyProfile
+	err := r.db.Where("company_id = ?", companyID).First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("company profile %s: %w", companyID, ErrNotFound)
+	}
+	return &p, err
+}
+
+// upsertCompanyProfile writes a company's profile, inserting it on first save. A
+// map is used for the update so that clearing a field to "" is persisted (struct
+// Updates would silently skip zero values).
+func upsertCompanyProfile(tx *gorm.DB, p *CompanyProfile) error {
+	var existing CompanyProfile
+	err := tx.Where("company_id = ?", p.CompanyID).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(p).Error
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Model(&existing).Updates(map[string]interface{}{
+		"legal_name":  p.LegalName,
+		"email":       p.Email,
+		"phone":       p.Phone,
+		"website":     p.Website,
+		"address":     p.Address,
+		"city":        p.City,
+		"country":     p.Country,
+		"tax_id":      p.TaxID,
+		"logo_url":    p.LogoURL,
+		"description": p.Description,
+	}).Error
+}
+
+// CreateCompanyProfileRequest stages a profile change. Any existing pending
+// request for the company is replaced, so there is only ever one under review.
+func (r *Repository) CreateCompanyProfileRequest(companyID, requestedBy uuid.UUID, payload string) (*CompanyProfileRequest, error) {
+	req := &CompanyProfileRequest{
+		CompanyID:   companyID,
+		RequestedBy: requestedBy,
+		Payload:     payload,
+		Status:      CompanyProfilePending,
+	}
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("company_id = ? AND status = ?", companyID, CompanyProfilePending).
+			Delete(&CompanyProfileRequest{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(req).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+// GetPendingCompanyProfileRequest returns the company's pending change request,
+// or (nil, nil) when there is none.
+func (r *Repository) GetPendingCompanyProfileRequest(companyID uuid.UUID) (*CompanyProfileRequest, error) {
+	var req CompanyProfileRequest
+	err := r.db.Where("company_id = ? AND status = ?", companyID, CompanyProfilePending).
+		Order("created_at DESC").First(&req).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &req, nil
+}
+
+// ListCompanyProfileRequests returns a company's profile-change history, newest first.
+func (r *Repository) ListCompanyProfileRequests(companyID uuid.UUID, limit int) ([]CompanyProfileRequest, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	var reqs []CompanyProfileRequest
+	err := r.db.Where("company_id = ?", companyID).
+		Order("created_at DESC").Limit(limit).Find(&reqs).Error
+	return reqs, err
+}
+
+// ListCompanyProfileRequestsForPlatform returns profile-change requests across
+// all companies, optionally filtered by status.
+func (r *Repository) ListCompanyProfileRequestsForPlatform(status string, offset, limit int) ([]CompanyProfileRequest, int64, error) {
+	query := r.db.Model(&CompanyProfileRequest{})
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var reqs []CompanyProfileRequest
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&reqs).Error; err != nil {
+		return nil, 0, err
+	}
+	return reqs, total, nil
+}
+
+// GetCompanyProfileRequestByID returns a single profile-change request.
+func (r *Repository) GetCompanyProfileRequestByID(id uuid.UUID) (*CompanyProfileRequest, error) {
+	var req CompanyProfileRequest
+	err := r.db.Where("id = ?", id).First(&req).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("company profile request %s: %w", id, ErrNotFound)
+	}
+	return &req, err
+}
+
+// ApproveCompanyProfileRequest applies a pending request's payload to the live
+// profile and marks the request approved, in a single transaction.
+func (r *Repository) ApproveCompanyProfileRequest(requestID, reviewerID uuid.UUID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var req CompanyProfileRequest
+		if err := tx.Where("id = ?", requestID).First(&req).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("company profile request %s: %w", requestID, ErrNotFound)
+			}
+			return err
+		}
+		if req.Status != CompanyProfilePending {
+			return ErrNotPending
+		}
+
+		var profile CompanyProfile
+		if err := json.Unmarshal([]byte(req.Payload), &profile); err != nil {
+			return fmt.Errorf("decode profile payload: %w", err)
+		}
+		profile.CompanyID = req.CompanyID
+
+		if err := upsertCompanyProfile(tx, &profile); err != nil {
+			return err
+		}
+
+		now := time.Now()
+		return tx.Model(&req).Updates(map[string]interface{}{
+			"status":      CompanyProfileApproved,
+			"reviewed_by": reviewerID,
+			"reviewed_at": now,
+		}).Error
+	})
+}
+
+// RejectCompanyProfileRequest marks a pending request rejected, recording the
+// reason. Requests that are missing or already reviewed return an error.
+func (r *Repository) RejectCompanyProfileRequest(requestID, reviewerID uuid.UUID, reason string) error {
+	result := r.db.Model(&CompanyProfileRequest{}).
+		Where("id = ? AND status = ?", requestID, CompanyProfilePending).
+		Updates(map[string]interface{}{
+			"status":      CompanyProfileRejected,
+			"reason":      reason,
+			"reviewed_by": reviewerID,
+			"reviewed_at": time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		if _, err := r.GetCompanyProfileRequestByID(requestID); err != nil {
+			return err
+		}
+		return ErrNotPending
+	}
+	return nil
+}
+
+// =============================================================================
+// Audit log (append-only)
+// =============================================================================
+
+// CreateAuditLog appends one audit entry.
+func (r *Repository) CreateAuditLog(entry *AuditLog) error {
+	return r.db.Create(entry).Error
+}
+
+// ListAuditLogs returns audit entries ordered newest-first. When companyID is
+// non-nil the query is scoped to that company (tenant view); nil selects across
+// all companies (platform view).
+func (r *Repository) ListAuditLogs(companyID *uuid.UUID, filter dtos.AuditLogFilter) ([]AuditLog, int64, error) {
+	query := r.db.Model(&AuditLog{})
+	if companyID != nil {
+		query = query.Where("company_id = ?", *companyID)
+	}
+	if filter.Action != "" {
+		query = query.Where("action = ?", filter.Action)
+	}
+	if filter.EntityType != "" {
+		query = query.Where("entity_type = ?", filter.EntityType)
+	}
+	if filter.ActorType != "" {
+		query = query.Where("actor_type = ?", filter.ActorType)
+	}
+	if filter.Search != "" {
+		like := "%" + filter.Search + "%"
+		query = query.Where("actor_name ILIKE ? OR entity_id ILIKE ? OR action ILIKE ?", like, like, like)
+	}
+	if filter.From != nil {
+		query = query.Where("created_at >= ?", *filter.From)
+	}
+	if filter.To != nil {
+		query = query.Where("created_at <= ?", *filter.To)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var logs []AuditLog
+	if err := query.Order("created_at DESC").Offset(filter.Offset).Limit(filter.Limit).Find(&logs).Error; err != nil {
+		return nil, 0, err
+	}
+	return logs, total, nil
+}
+
+// =============================================================================
 // Errors
 // =============================================================================
 
-var ErrNotFound = errors.New("record not found")
+var (
+	ErrNotFound   = errors.New("record not found")
+	ErrNotPending = errors.New("request is not pending")
+)

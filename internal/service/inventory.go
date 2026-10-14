@@ -19,6 +19,12 @@ func NewInventoryService(repo *database.Repository, store *storage.Store) *Inven
 	return &InventoryService{repo: repo, storage: store}
 }
 
+// WithRepo returns a copy of the service bound to another repository — used to
+// run an operation on a transaction-scoped repository.
+func (s *InventoryService) WithRepo(repo *database.Repository) *InventoryService {
+	return &InventoryService{repo: repo, storage: s.storage}
+}
+
 func (s *InventoryService) CreateInventory(companyID uuid.UUID, name, address, latitude, longitude string) (*database.Inventory, error) {
 	if name == "" {
 		return nil, errors.New("inventory name is required")

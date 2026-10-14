@@ -7,6 +7,7 @@ import (
 
 	"github.com/ddmas26/inventory/internal/database"
 	"github.com/ddmas26/inventory/internal/dtos"
+	"github.com/ddmas26/inventory/internal/service"
 	"github.com/google/uuid"
 )
 
@@ -22,9 +23,31 @@ func (h *Handler) PlatformLogin(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.PlatformAuth.Login(req)
 	if err != nil {
+		h.Audit.Record(service.AuditEntry{
+			ActorType:  database.AuditActorPlatform,
+			Action:     "auth.platform_login_failed",
+			EntityType: "platform_user",
+			Metadata:   map[string]string{"email": req.Email},
+			IP:         clientIP(r),
+			UserAgent:  r.UserAgent(),
+			RequestID:  RequestIDFromContext(r.Context()),
+		})
 		respondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+
+	platformUserID := resp.User.ID
+	h.Audit.Record(service.AuditEntry{
+		ActorType:  database.AuditActorPlatform,
+		ActorID:    &platformUserID,
+		ActorName:  resp.User.Name,
+		Action:     "auth.platform_login",
+		EntityType: "platform_user",
+		EntityID:   platformUserID.String(),
+		IP:         clientIP(r),
+		UserAgent:  r.UserAgent(),
+		RequestID:  RequestIDFromContext(r.Context()),
+	})
 
 	respond(w, http.StatusOK, resp)
 }
@@ -178,7 +201,8 @@ func (h *Handler) GetCompany(w http.ResponseWriter, r *http.Request) {
 
 // updateCompanyStatus applies a status transition and returns the new state.
 func (h *Handler) updateCompanyStatus(w http.ResponseWriter, r *http.Request, status database.CompanyStatus) {
-	if _, err := h.platformSessionFromRequest(r); err != nil {
+	claims, err := h.platformSessionFromRequest(r)
+	if err != nil {
 		respondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -189,7 +213,33 @@ func (h *Handler) updateCompanyStatus(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 
-	company, err := h.Repo.UpdateCompanyStatus(id, status)
+	// Snapshot the previous status for the audit trail.
+	action := "company.status_change"
+	switch status {
+	case database.CompanyStatusApproved:
+		action = "company.approve"
+	case database.CompanyStatusRejected:
+		action = "company.reject"
+	case database.CompanyStatusSuspended:
+		action = "company.suspend"
+	}
+
+	var company *database.Company
+	entry := auditPlatformEntry(r, claims)
+	entry.Action, entry.EntityType, entry.EntityID = action, "company", id.String()
+	// Attribute the platform action to the company, so the tenant sees it too.
+	entry.CompanyID = &id
+
+	err = h.auditMutation(&entry, func(tx *database.Repository) error {
+		before, _ := tx.GetCompanyByID(id)
+		c, err := tx.UpdateCompanyStatus(id, status)
+		if err != nil {
+			return err
+		}
+		company = c
+		entry.OldValues, entry.NewValues = before, c
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "company not found")
