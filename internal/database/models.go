@@ -20,7 +20,7 @@ const (
 
 // Company is a tenant. Every tenant-owned record (users, roles, inventories,
 // products and stock) belongs to exactly one company, and all access is scoped
-// to the caller's company.
+// to the caller's company. comment for testing deploy
 type Company struct {
 	ID         uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	Name       string         `gorm:"type:varchar(255);not null" json:"name"`
